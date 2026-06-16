@@ -1,0 +1,26 @@
+Name: Mellein
+Synon: Ochracin
+Synon: 8-hydroxy-3-methyl-3,4-dihydroisochromen-1-one
+DB#: MSBNK-AAFC-AC000001
+InChIKey: KWILGNNWGSNMPA-UHFFFAOYSA-N
+InChI: InChI=1S/C10H10O3/c1-6-5-7-3-2-4-8(11)9(7)10(12)13-6/h2-4,6,11H,5H2,1H3
+SMILES: CC1CC2=C(C(=CC=C2)O)C(=O)O1
+Precursor_type: [M+H]+
+Spectrum_type: MS2
+PrecursorMZ: 179.0697
+Instrument_type: LC-ESI-ITFT
+Instrument: Q-Exactive Orbitrap Thermo Scientific
+Ion_mode: POSITIVE
+Collision_energy: 10(NCE)
+Formula: C10H10O3
+MW: 178
+ExactMass: 178.06299
+Comments: Parent=179.0697
+Splash: splash10-03fr-0900000000-035ec76d23650a15673b
+Num Peaks: 5
+133.0648 225
+151.0754 94
+155.9743 112
+161.0597 999
+179.0703 750
+
