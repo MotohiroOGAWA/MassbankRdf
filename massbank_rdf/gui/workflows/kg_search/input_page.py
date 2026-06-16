@@ -174,6 +174,13 @@ def create_app(
         ion_mode: str,
         precursor_mz: float | None,
         precursor_tolerance: float | None,
+        llm_enabled: bool,
+        llm_output_language: str,
+        azure_openai_endpoint: str,
+        azure_openai_deployment: str,
+        azure_openai_api_version: str,
+        azure_openai_api_key: str,
+        llm_user_context: str,
         request: gr.Request,
     ) -> str:
         """Parse peak text, run MassBank search, and save result DataFrame."""
@@ -207,27 +214,40 @@ def create_app(
             precursor_tolerance=precursor_tolerance,
         )
 
+
+        payload = {
+            "result_df": result_df,
+            "summary": {
+                "peak_count": int(len(peak_array)),
+                "min_mz": float(peak_array[:, 0].min()),
+                "max_mz": float(peak_array[:, 0].max()),
+                "max_intensity": float(peak_array[:, 1].max()),
+                "top_n": int(top_n),
+                "mz_tolerance": float(mz_tolerance),
+                "min_matched_peaks": int(min_matched_peaks),
+                "ion_mode": normalized_ion_mode or "-",
+                "precursor_mz": precursor_mz if precursor_mz is not None else "-",
+                "precursor_tolerance": (
+                    precursor_tolerance
+                    if precursor_tolerance is not None
+                    else "-"
+                ),
+            },
+            "llm_config": {
+                "enabled": bool(llm_enabled),
+                "provider": "azure_openai",
+                "endpoint": azure_openai_endpoint.strip(),
+                "deployment": azure_openai_deployment.strip(),
+                "api_version": azure_openai_api_version.strip() or "2024-10-21",
+                "api_key": azure_openai_api_key.strip(),
+                "output_language": llm_output_language or "Japanese",
+                "user_context": llm_user_context or "",
+            },
+        }
+
         session_store.set(
             session_id=session_id,
-            value={
-                "result_df": result_df,
-                "summary": {
-                    "peak_count": len(peak_array),
-                    "min_mz": float(mz_list.min()),
-                    "max_mz": float(mz_list.max()),
-                    "max_intensity": float(intensity_list.max()),
-                    "top_n": int(top_n),
-                    "mz_tolerance": float(mz_tolerance),
-                    "min_matched_peaks": int(min_matched_peaks),
-                    "ion_mode": normalized_ion_mode or "-",
-                    "precursor_mz": precursor_mz if precursor_mz is not None else "-",
-                    "precursor_tolerance": (
-                        precursor_tolerance
-                        if precursor_tolerance is not None
-                        else "-"
-                    ),
-                },
-            },
+            value=payload,
         )
 
         return "OK"
@@ -314,6 +334,57 @@ def create_app(
                         minimum=0,
                     )
 
+
+
+                gr.HTML("<h3>LLM Interpretation</h3>")
+
+                with gr.Row():
+                    llm_enabled = gr.Checkbox(
+                        label="Run LLM interpretation after KG lookup",
+                        value=False,
+                    )
+
+                    llm_output_language = gr.Dropdown(
+                        label="Output language",
+                        choices=[
+                            "English",
+                            "Japanese",
+                        ],
+                        value="English",
+                    )
+
+                with gr.Row():
+                    azure_openai_endpoint = gr.Textbox(
+                        label="Azure OpenAI endpoint",
+                        placeholder="https://xxxxx.openai.azure.com/",
+                    )
+
+                    azure_openai_deployment = gr.Textbox(
+                        label="Azure OpenAI deployment",
+                        placeholder="gpt-4.1-mini",
+                    )
+
+                with gr.Row():
+                    azure_openai_api_version = gr.Textbox(
+                        label="Azure OpenAI API version",
+                        value="2024-10-21",
+                    )
+
+                    azure_openai_api_key = gr.Textbox(
+                        label="Azure OpenAI API key",
+                        type="password",
+                    )
+
+                llm_user_context = gr.Textbox(
+                    label="Interpretation context",
+                    lines=5,
+                    placeholder=(
+                        "Example: This sample is from palm oil oxidation experiment. "
+                        "Focus on odor-related metabolites and lipid oxidation."
+                    ),
+                )
+
+
                 run_button = gr.Button(
                     "Run",
                     elem_id="massbank-basic-search-button",
@@ -347,6 +418,13 @@ def create_app(
                     ion_mode,
                     precursor_mz,
                     precursor_tolerance,
+                    llm_enabled,
+                    llm_output_language,
+                    azure_openai_endpoint,
+                    azure_openai_deployment,
+                    azure_openai_api_version,
+                    azure_openai_api_key,
+                    llm_user_context,
                 ],
                 outputs=status_box,
             ).then(

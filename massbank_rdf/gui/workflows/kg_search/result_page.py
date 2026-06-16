@@ -17,7 +17,10 @@ from massbank_rdf.gui.workflows.kg_search.result_tabs.kg_tab import (
     build_kg_display_loader,
     create_kg_tab,
 )
-
+from massbank_rdf.gui.workflows.kg_search.result_tabs.interpretation_tab import (
+    build_interpretation_loader,
+    create_interpretation_tab,
+)
 
 def format_search_summary(payload: dict[str, Any]) -> str:
     """Format search condition summary."""
@@ -94,6 +97,10 @@ def create_app(
         session_store=session_store,
     )
 
+    load_interpretation_result = build_interpretation_loader(
+        session_store=session_store,
+    )
+
     with gr.Blocks(title="Knowledge Graph Search - Result") as app:
         with gr.Group(elem_classes="massbank-page massbank-kg-result-page"):
             gr.HTML(
@@ -149,7 +156,16 @@ def create_app(
                         pubchem_pathway_table,
                         hmdb_table,
                         knapsack_activity_table,
+                        kg_json_file,
+                        kg_csv_zip_file,
                     ) = create_kg_tab()
+
+                with gr.Tab("Interpretation", id="interpretation"):
+                    (
+                        interpretation_status_text,
+                        interpretation_json,
+                        interpretation_json_file,
+                    ) = create_interpretation_tab()
 
             gr.HTML(
                 """
@@ -202,6 +218,21 @@ def create_app(
                     pubchem_pathway_table,
                     hmdb_table,
                     knapsack_activity_table,
+                    kg_json_file,
+                    kg_csv_zip_file,
+                    result_tabs,
+                ],
+            ).then(
+                fn=lambda: "KG result loaded. Running LLM interpretation...",
+                inputs=[],
+                outputs=progress_text,
+            ).then(
+                fn=load_interpretation_result,
+                inputs=[],
+                outputs=[
+                    interpretation_status_text,
+                    interpretation_json,
+                    interpretation_json_file,
                     result_tabs,
                 ],
             ).then(
