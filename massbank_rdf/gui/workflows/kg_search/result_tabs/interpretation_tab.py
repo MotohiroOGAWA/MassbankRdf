@@ -122,6 +122,8 @@ def create_interpretation_tab() -> tuple[
 
 def build_interpretation_loader(
     session_store: TemporarySessionStore,
+    *,
+    session_cookie_name: str = "kg_session_id",
 ):
     """Build callback for LLM interpretation after KG lookup."""
 
@@ -132,7 +134,7 @@ def build_interpretation_loader(
         dict[str, Any],
         str | None,
     ]:
-        session_id = request.request.cookies.get("kg_session_id")
+        session_id = request.request.cookies.get(session_cookie_name)
 
         if not session_id:
             return (

@@ -1,0 +1,28 @@
+{
+  "records": [
+    {
+      "peaks": [
+        {"mz": 55.0524, "intensity": 21},
+        {"mz": 67.01821, "intensity": 20},
+        {"mz": 68.99649, "intensity": 29},
+        {"mz": 69.06867, "intensity": 58},
+        {"mz": 111.11648, "intensity": 50}
+      ]
+    },
+    {
+      "peaks": [
+        {"mz": 55.0531, "intensity": 20},
+        {"mz": 67.01736, "intensity": 20},
+        {"mz": 68.99583, "intensity": 20},
+        {"mz": 69.06924, "intensity": 82},
+        {"mz": 89.03699, "intensity": 29}
+      ]
+    }
+  ],
+  "mz_tolerance": 0.01,
+  "common_peak_n": 10,
+  "max_massbank_inchikey": 3,
+  "massbank_top_n": 50,
+  "min_matched_peaks": 3,
+  "ion_mode": "Positive"
+}
