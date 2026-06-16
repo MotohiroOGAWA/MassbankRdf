@@ -84,12 +84,45 @@ class MassBankDatabase:
     # DataFrame access
     # ------------------------------------------------------------------
 
-    def records_to_dataframe(self) -> pd.DataFrame:
-        """Load all MassBank records as a DataFrame."""
-        stmt = select(MassBankRecord)
+    # def records_to_dataframe(self) -> pd.DataFrame:
+    #     """Load all MassBank records as a DataFrame."""
+    #     stmt = select(MassBankRecord)
 
-        with self.engine.connect() as conn:
-            return pd.read_sql(stmt, conn)
+    #     with self.engine.connect() as conn:
+    #         return pd.read_sql(stmt, conn)
+
+    def records_to_dataframe(
+        self,
+        records: list[MassBankRecord],
+    ) -> pd.DataFrame:
+        """Convert MassBankRecord objects to a pandas DataFrame."""
+        rows: list[dict] = []
+
+        for record in records:
+            rows.append(
+                {
+                    "id": record.id,
+                    "accession_id": record.accession_id,
+                    "name": record.name,
+                    "smiles": record.smiles,
+                    "inchikey": record.inchikey,
+                    "formula": record.formula,
+                    "precursor_mz": record.precursor_mz,
+                    "precursor_type": record.precursor_type,
+                    "splash": record.splash,
+                    "ms_type": record.ms_type,
+                    "ion_mode": record.ion_mode,
+                    "collision_energy": record.collision_energy,
+                    "retention_time": record.retention_time,
+                    "instrument_type": record.instrument_type,
+                    "ionization": record.ionization,
+                    "ionization_voltage": record.ionization_voltage,
+                    "fragmentation_mode": record.fragmentation_mode,
+                    "ac_instrument": record.ac_instrument,
+                }
+            )
+
+        return pd.DataFrame(rows)
 
     def peaks_to_dataframe(self) -> pd.DataFrame:
         """Load all MassBank peak records as a DataFrame."""
@@ -160,6 +193,47 @@ class MassBankDatabase:
         """Get one MassBank record by internal primary key id."""
         with self.session() as session:
             return session.get(MassBankRecord, record_id)
+        
+    def get_records_by_ids(
+        self,
+        record_ids: list[int],
+    ) -> list[MassBankRecord]:
+        """Get MassBank records by internal primary key ids.
+
+        The returned records preserve the order of record_ids as much as possible.
+        Missing ids are ignored.
+        """
+        if not record_ids:
+            return []
+
+        unique_ids = list(dict.fromkeys(int(record_id) for record_id in record_ids))
+
+        stmt = select(MassBankRecord).where(
+            MassBankRecord.id.in_(unique_ids)
+        )
+
+        with self.session() as session:
+            records = list(session.scalars(stmt).all())
+
+        record_by_id = {
+            record.id: record
+            for record in records
+        }
+
+        return [
+            record_by_id[record_id]
+            for record_id in unique_ids
+            if record_id in record_by_id
+        ]
+
+    def get_records_by_ids_dataframe(
+        self,
+        record_ids: list[int],
+    ) -> pd.DataFrame:
+        """Get MassBank records by ids and return them as a DataFrame."""
+        records = self.get_records_by_ids(record_ids)
+
+        return self.records_to_dataframe(records)
 
     def get_record(
         self,
