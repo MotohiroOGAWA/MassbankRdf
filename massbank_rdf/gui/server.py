@@ -11,8 +11,10 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, Response
 
-from massbank_rdf.gui.session_store import TemporarySessionStore
-
+from .session_store import TemporarySessionStore
+from .settings import (
+    create_kg_lookup_service_from_endpoint_settings,
+)
 
 APP_ROOT = Path(__file__).resolve().parents[2]
 if str(APP_ROOT) not in sys.path:
@@ -202,6 +204,10 @@ def create_server() -> FastAPI:
         ttl_seconds=60 * 60,
     )
 
+    kg_lookup_service = create_kg_lookup_service_from_endpoint_settings(
+        timeout=600,
+    )
+
     @app.middleware("http")
     async def add_kg_session_id(
         request: Request,
@@ -240,7 +246,10 @@ def create_server() -> FastAPI:
     gr.mount_gradio_app(
         app,
         _with_app_layout(
-            create_kg_result_app(session_store=kg_session_store)
+            create_kg_result_app(
+                session_store=kg_session_store,
+                kg_lookup_service=kg_lookup_service,
+            )
         ),
         path="/kg/result",
         allowed_paths=[str(GUI_ROOT)],

@@ -2,41 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
-import pandas as pd
 import gradio as gr
 
 from massbank_rdf.gui.session_store import TemporarySessionStore
-from massbank_rdf.db.massbank.database import MassBankDatabase
-
-def _make_empty_result_dataframe() -> pd.DataFrame:
-    """Create an empty result table."""
-    return pd.DataFrame(
-        columns=[
-            "score",
-            "match",
-            "accession_id",
-            "name",
-            "inchikey",
-            "smiles",
-            "formula",
-            "precursor_mz",
-            "precursor_type",
-            "ion_mode",
-            "ms_type",
-            "collision_energy",
-            "retention_time",
-            "instrument_type",
-            "ionization",
-            "ionization_voltage",
-            "fragmentation_mode",
-            "ac_instrument",
-            "splash",
-        ]
-    )
+from .result_tabs.massbank_tab import (
+    build_massbank_loader,
+    create_massbank_tab,
+)
+from .result_tabs.kg_tab import (
+    build_kg_loader,
+    create_kg_tab,
+)
 
 
-def _format_summary(payload: dict[str, Any]) -> str:
-    """Format a simple result summary."""
+def format_search_summary(payload: dict[str, Any]) -> str:
+    """Format search condition summary."""
     summary = payload.get("summary", {})
 
     if not isinstance(summary, dict):
@@ -55,169 +35,56 @@ def _format_summary(payload: dict[str, Any]) -> str:
         f"Min matched peaks: {summary.get('min_matched_peaks', '-')}\n"
         f"Ion mode: {summary.get('ion_mode', '-')}\n"
         f"Precursor m/z: {summary.get('precursor_mz', '-')}\n"
-        f"Precursor tolerance: {summary.get('precursor_tolerance', '-')}\n"
+        f"Precursor tolerance: {summary.get('precursor_tolerance', '-')}"
     )
 
-def _format_result_dataframe(result_df: pd.DataFrame) -> pd.DataFrame:
-    """Attach MassBank record information and format result table.
 
-    Input result_df is expected to contain:
-        id
-        cosine_score
-        matched_peak_count
-
-    The local id is used only for joining and is not shown.
-    """
-    if result_df is None or result_df.empty:
-        return _make_empty_result_dataframe()
-
-    if "id" not in result_df.columns:
-        return result_df
-
-    score_df = result_df.copy()
-
-    record_ids = (
-        score_df["id"]
-        .dropna()
-        .astype(int)
-        .tolist()
-    )
-
-    if not record_ids:
-        return _make_empty_result_dataframe()
-
-    db = MassBankDatabase()
-    record_df = db.get_records_by_ids_dataframe(record_ids)
-
-    if record_df.empty:
-        return _make_empty_result_dataframe()
-
-    merged_df = score_df.merge(
-        record_df,
-        on="id",
-        how="left",
-    )
-
-    # Hide local/internal database IDs and debug columns.
-    hidden_columns = {
-        "id",
-        "record_id",
-        "massbank_record_id",
-        "dot_product",
-        "reference_norm_square",
-    }
-
-    merged_df = merged_df.drop(
-        columns=[col for col in hidden_columns if col in merged_df.columns],
-        errors="ignore",
-    )
-
-    # Format score columns for UI.
-    if "cosine_score" in merged_df.columns:
-        merged_df["cosine_score"] = (
-            pd.to_numeric(merged_df["cosine_score"], errors="coerce")
-            .round(3)
-        )
-
-    if "matched_peak_count" in merged_df.columns:
-        merged_df["matched_peak_count"] = (
-            pd.to_numeric(merged_df["matched_peak_count"], errors="coerce")
-            .astype("Int64")
-        )
-
-    # Short display names for UI.
-    merged_df = merged_df.rename(
-        columns={
-            "cosine_score": "score",
-            "matched_peak_count": "match",
-        }
-    )
-
-    first_columns = [
-        "score",
-        "match",
-    ]
-
-    record_columns = [
-        "accession_id",
-        "name",
-        "inchikey",
-        "smiles",
-        "formula",
-        "precursor_mz",
-        "precursor_type",
-        "ion_mode",
-        "ms_type",
-        "collision_energy",
-        "retention_time",
-        "instrument_type",
-        "ionization",
-        "ionization_voltage",
-        "fragmentation_mode",
-        "ac_instrument",
-        "splash",
-    ]
-
-    ordered_columns: list[str] = []
-
-    for col in first_columns:
-        if col in merged_df.columns:
-            ordered_columns.append(col)
-
-    for col in record_columns:
-        if col in merged_df.columns and col not in ordered_columns:
-            ordered_columns.append(col)
-
-    for col in merged_df.columns:
-        if col not in ordered_columns:
-            ordered_columns.append(col)
-
-    return merged_df[ordered_columns]
-
-def create_app(
+def build_summary_loader(
     session_store: TemporarySessionStore,
-) -> gr.Blocks:
-    """Create the KG search result page."""
+):
+    """Build callback for loading search summary."""
 
-    def _load_result_from_session(
+    def _load_search_summary(
         request: gr.Request,
-    ) -> tuple[str, pd.DataFrame]:
-        """Load the latest result from temporary session store."""
+    ) -> str:
         session_id = request.request.cookies.get("kg_session_id")
 
         if not session_id:
-            return (
-                "Session ID was not found. Please go back and run the search again.",
-                _make_empty_result_dataframe(),
-            )
+            return "Session ID was not found. Please go back and run search again."
 
         payload = session_store.get(session_id)
 
         if payload is None:
-            return (
-                "No result was found for this session. Please go back and run the search again.",
-                _make_empty_result_dataframe(),
-            )
+            return "No result was found. Please go back and run search again."
 
         if not isinstance(payload, dict):
-            return (
-                f"Unexpected payload type: {type(payload).__name__}",
-                _make_empty_result_dataframe(),
-            )
+            return f"Unexpected payload type: {type(payload).__name__}"
 
-        result_df = payload.get("result_df")
+        return format_search_summary(payload)
 
-        if result_df is None:
-            result_df = _make_empty_result_dataframe()
-        elif not isinstance(result_df, pd.DataFrame):
-            result_df = pd.DataFrame(result_df)
+    return _load_search_summary
 
-        result_df = _format_result_dataframe(result_df)
 
-        summary_text = _format_summary(payload)
-        summary_text += f"Results: {len(result_df)}"
+def create_app(
+    session_store: TemporarySessionStore,
+    kg_lookup_service: Any | None = None,
+) -> gr.Blocks:
+    """Create KG search result page with separated tabs."""
 
-        return summary_text, result_df
+    load_search_summary = build_summary_loader(
+        session_store=session_store,
+    )
+
+    load_massbank_result = build_massbank_loader(
+        session_store=session_store,
+    )
+
+    load_kg_result = build_kg_loader(
+        session_store=session_store,
+        kg_lookup_service=kg_lookup_service,
+        kg_n=3,
+        limit=100,
+    )
 
     with gr.Blocks(title="Knowledge Graph Search - Result") as app:
         with gr.Group(elem_classes="massbank-page massbank-kg-result-page"):
@@ -234,41 +101,81 @@ def create_app(
                 <section class="massbank-page-heading">
                     <h1>Search Result</h1>
                     <p>
-                        The result stored in the current browser session is shown here.
+                        MassBank search results and knowledge graph information
+                        are shown in separated tabs.
                     </p>
                 </section>
                 """
             )
 
             summary_text = gr.Textbox(
-                label="Summary",
-                lines=6,
+                label="Search summary",
+                lines=12,
                 interactive=False,
             )
 
-            result_table = gr.Dataframe(
-                label="MassBank search results",
-                value=_make_empty_result_dataframe(),
+            progress_text = gr.Textbox(
+                label="Progress",
+                value="Loading search summary...",
+                lines=3,
                 interactive=False,
-                wrap=True,
             )
 
-            with gr.Row():
-                gr.HTML(
-                    """
-                    <div class="massbank-demo-box">
-                        <a href="/kg/input/">Back to input page</a>
-                    </div>
-                    """
-                )
+            with gr.Tabs(selected="massbank") as result_tabs:
+                with gr.Tab("MassBank", id="massbank"):
+                    massbank_result_table = create_massbank_tab()
+
+                with gr.Tab("KG", id="kg"):
+                    (
+                        kg_status_text,
+                        pubchem_compound_table,
+                        pubchem_pathway_table,
+                        hmdb_table,
+                        knapsack_activity_table,
+                    ) = create_kg_tab()
+
+            gr.HTML(
+                """
+                <div class="massbank-demo-box">
+                    <a href="/kg/input/">Back to input page</a>
+                </div>
+                """
+            )
 
             app.load(
-                fn=_load_result_from_session,
+                fn=load_search_summary,
+                inputs=[],
+                outputs=summary_text,
+            ).then(
+                fn=lambda: "Loading MassBank result...",
+                inputs=[],
+                outputs=progress_text,
+            ).then(
+                fn=load_massbank_result,
                 inputs=[],
                 outputs=[
-                    summary_text,
-                    result_table,
+                    massbank_result_table,
+                    result_tabs,
                 ],
+            ).then(
+                fn=lambda: "MassBank result loaded. Loading KG data...",
+                inputs=[],
+                outputs=progress_text,
+            ).then(
+                fn=load_kg_result,
+                inputs=[],
+                outputs=[
+                    kg_status_text,
+                    pubchem_compound_table,
+                    pubchem_pathway_table,
+                    hmdb_table,
+                    knapsack_activity_table,
+                    result_tabs,
+                ],
+            ).then(
+                fn=lambda: "Finished.",
+                inputs=[],
+                outputs=progress_text,
             )
 
     return app
