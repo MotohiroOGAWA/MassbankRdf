@@ -186,6 +186,8 @@ def create_kg_tab() -> tuple[
 
 def build_kg_display_loader(
     session_store: TemporarySessionStore,
+    *,
+    session_cookie_name: str = "kg_session_id",
 ):
     """Build callback for displaying saved KG result."""
 
@@ -201,7 +203,7 @@ def build_kg_display_loader(
         str | None,
         gr.update,
     ]:
-        session_id = request.request.cookies.get("kg_session_id")
+        session_id = request.request.cookies.get(session_cookie_name)
 
         if not session_id:
             return (

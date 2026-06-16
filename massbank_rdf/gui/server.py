@@ -26,7 +26,9 @@ from .app import create_app as create_home_app
 from .workflows.kg_search.page import create_app as create_kg_app
 from .workflows.kg_search.input_page import create_app as create_kg_input_app
 from .workflows.kg_search.result_page import create_app as create_kg_result_app
-
+from .workflows.common_peak_annotation.page import create_app as create_common_peak_app
+from .workflows.common_peak_annotation.input_page import create_app as create_common_peak_input_app
+from .workflows.common_peak_annotation.result_page import create_app as create_common_peak_result_app
 
 APP_LAYOUT_STYLES = """
 footer {
@@ -203,25 +205,37 @@ def create_server() -> FastAPI:
     kg_session_store = TemporarySessionStore(
         ttl_seconds=60 * 60,
     )
+    common_peak_session_store = TemporarySessionStore(
+        ttl_seconds=60 * 60,
+    )
 
     kg_lookup_service = create_kg_lookup_service_from_endpoint_settings(
         timeout=600,
     )
 
     @app.middleware("http")
-    async def add_kg_session_id(
+    async def add_session_ids(
         request: Request,
         call_next,
     ) -> Response:
-        session_id = request.cookies.get("kg_session_id")
+        kg_session_id = request.cookies.get("kg_session_id")
+        common_peak_session_id = request.cookies.get("common_peak_session_id")
 
         response = await call_next(request)
 
-        if not session_id:
-            session_id = uuid.uuid4().hex
+        if not kg_session_id:
             response.set_cookie(
                 key="kg_session_id",
-                value=session_id,
+                value=uuid.uuid4().hex,
+                httponly=True,
+                samesite="lax",
+                max_age=60 * 60,
+            )
+
+        if not common_peak_session_id:
+            response.set_cookie(
+                key="common_peak_session_id",
+                value=uuid.uuid4().hex,
                 httponly=True,
                 samesite="lax",
                 max_age=60 * 60,
@@ -233,6 +247,11 @@ def create_server() -> FastAPI:
     @app.get("/kg/")
     def redirect_kg():
         return RedirectResponse(url="/kg/input/")
+
+    @app.get("/common-peak")
+    @app.get("/common-peak/")
+    def redirect_common_peak():
+        return RedirectResponse(url="/common-peak/input/")
 
     gr.mount_gradio_app(
         app,
@@ -252,6 +271,29 @@ def create_server() -> FastAPI:
             )
         ),
         path="/kg/result",
+        allowed_paths=[str(GUI_ROOT)],
+    )
+
+    gr.mount_gradio_app(
+        app,
+        _with_app_layout(
+            create_common_peak_input_app(
+                session_store=common_peak_session_store,
+            )
+        ),
+        path="/common-peak/input",
+        allowed_paths=[str(GUI_ROOT)],
+    )
+
+    gr.mount_gradio_app(
+        app,
+        _with_app_layout(
+            create_common_peak_result_app(
+                session_store=common_peak_session_store,
+                kg_lookup_service=kg_lookup_service,
+            )
+        ),
+        path="/common-peak/result",
         allowed_paths=[str(GUI_ROOT)],
     )
 

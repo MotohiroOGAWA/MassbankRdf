@@ -138,6 +138,7 @@ def build_sparql_loader(
     *,
     fallback_max_massbank_inchikey: int | None = None,
     limit: int = 100,
+    session_cookie_name: str = "kg_session_id",
 ):
     """Build callback for creating SPARQL queries and running KG lookup.
 
@@ -159,7 +160,7 @@ def build_sparql_loader(
         str,
         gr.update,
     ]:
-        session_id = request.request.cookies.get("kg_session_id")
+        session_id = request.request.cookies.get(session_cookie_name)
 
         if not session_id:
             return (
