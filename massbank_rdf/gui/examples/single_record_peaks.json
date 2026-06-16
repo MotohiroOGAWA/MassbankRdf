@@ -1,0 +1,16 @@
+{
+  "peaks": [
+    {"mz": 133.0648, "intensity": 225},
+    {"mz": 151.0754, "intensity": 94},
+    {"mz": 155.9743, "intensity": 112},
+    {"mz": 161.0597, "intensity": 999},
+    {"mz": 179.0703, "intensity": 750}
+  ],
+  "top_n": 20,
+  "mz_tolerance": 0.01,
+  "min_matched_peaks": 3,
+  "ion_mode": "Positive",
+  "precursor_mz": 179.0697,
+  "precursor_tolerance": 0.01,
+  "max_massbank_inchikey": 3
+}

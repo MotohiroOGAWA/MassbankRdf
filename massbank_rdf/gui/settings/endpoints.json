@@ -1,0 +1,50 @@
+{
+  "massbank": {
+    "name": "MassBank",
+    "endpoint": "https://rdfportal.org/primary/sparql",
+    "graph": {
+      "enabled": false,
+      "iri": "http://rdfportal.org/dataset/massbank"
+    },
+    "auth": {
+      "user": "",
+      "password": ""
+    }
+  },
+  "pubchem": {
+    "name": "PubChem",
+    "endpoint": "https://rdfportal.org/pubchem/sparql",
+    "graph": {
+      "enabled": false,
+      "iri": ""
+    },
+    "auth": {
+      "user": "",
+      "password": ""
+    }
+  },
+  "hmdb": {
+    "name": "HMDB",
+    "endpoint": "http://10.242.145.97:3030/HMDB/query",
+    "graph": {
+      "enabled": false,
+      "iri": ""
+    },
+    "auth": {
+      "user": "",
+      "password": ""
+    }
+  },
+  "knapsack": {
+    "name": "KNApSAcK",
+    "endpoint": "http://10.242.145.97:3030/ds/query",
+    "graph": {
+      "enabled": false,
+      "iri": ""
+    },
+    "auth": {
+      "user": "",
+      "password": ""
+    }
+  }
+}
