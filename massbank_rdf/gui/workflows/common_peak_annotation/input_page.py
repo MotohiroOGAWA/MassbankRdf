@@ -371,7 +371,7 @@ def create_app(
 
             run_button = gr.Button(
                 "Run Common Peak Annotation",
-                elem_id="common-peak-run-button",
+                elem_id="massbank-basic-search-button",
             )
 
             status_box = gr.Textbox(
