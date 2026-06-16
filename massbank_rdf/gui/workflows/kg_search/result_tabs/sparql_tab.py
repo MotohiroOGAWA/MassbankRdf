@@ -13,13 +13,42 @@ def _empty_query_text() -> str:
     """Create empty query text."""
     return ""
 
+def _normalize_max_massbank_inchikey(
+    value: Any,
+) -> int | None:
+    """Normalize max MassBank InChIKey setting.
+
+    None or '-' means no limit.
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, str):
+        value = value.strip()
+
+        if value == "" or value == "-":
+            return None
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    if number <= 0:
+        return None
+
+    return number
 
 def _extract_inchikeys_from_massbank_df(
     massbank_df: pd.DataFrame,
     *,
-    kg_n: int = 3,
+    max_massbank_inchikey: int | None = None,
 ) -> list[str]:
-    """Extract normalized InChIKeys from MassBank display DataFrame."""
+    """Extract normalized InChIKeys from MassBank display DataFrame.
+
+    The order follows the MassBank result table order.
+    If max_massbank_inchikey is None, all unique InChIKeys are used.
+    """
     if massbank_df is None or massbank_df.empty:
         return []
 
@@ -27,8 +56,12 @@ def _extract_inchikeys_from_massbank_df(
         return []
 
     values = massbank_df["inchikey"].dropna().astype(str).tolist()
+    inchikeys = normalize_inchikey_values(values)
 
-    return normalize_inchikey_values(values)[:kg_n]
+    if max_massbank_inchikey is None:
+        return inchikeys
+
+    return inchikeys[:max_massbank_inchikey]
 
 
 def _get_query(
@@ -103,7 +136,7 @@ def build_sparql_loader(
     session_store: TemporarySessionStore,
     kg_lookup_service: Any | None = None,
     *,
-    kg_n: int = 3,
+    fallback_max_massbank_inchikey: int | None = None,
     limit: int = 100,
 ):
     """Build callback for creating SPARQL queries and running KG lookup.
@@ -160,9 +193,21 @@ def build_sparql_loader(
         elif not isinstance(massbank_df, pd.DataFrame):
             massbank_df = pd.DataFrame(massbank_df)
 
+        summary = payload.get("summary", {})
+
+        if not isinstance(summary, dict):
+            summary = {}
+
+        max_massbank_inchikey = _normalize_max_massbank_inchikey(
+            summary.get("max_massbank_inchikey")
+        )
+
+        if max_massbank_inchikey is None:
+            max_massbank_inchikey = fallback_max_massbank_inchikey
+
         inchikeys = _extract_inchikeys_from_massbank_df(
             massbank_df,
-            kg_n=kg_n,
+            max_massbank_inchikey=max_massbank_inchikey,
         )
 
         if len(inchikeys) == 0:
@@ -176,8 +221,15 @@ def build_sparql_loader(
             )
 
         if kg_lookup_service is None:
+            limit_label = (
+                str(max_massbank_inchikey)
+                if max_massbank_inchikey is not None
+                else "all"
+            )
+
             status = (
                 "KG lookup service is not configured yet.\n\n"
+                f"Max MassBank InChIKey for KG: {limit_label}\n"
                 "Extracted InChIKeys:\n"
                 + "\n".join(inchikeys)
             )
@@ -205,9 +257,16 @@ def build_sparql_loader(
         payload["kg_queries"] = kg_queries
         session_store.set(session_id, payload)
 
+        limit_label = (
+            str(max_massbank_inchikey)
+            if max_massbank_inchikey is not None
+            else "all"
+        )
+
         status = (
             "SPARQL queries were generated and KG lookup was executed.\n\n"
-            f"InChIKeys: {', '.join(inchikeys)}"
+            f"Max MassBank InChIKey for KG: {limit_label}\n"
+            f"Used InChIKeys: {', '.join(inchikeys)}"
         )
 
         return (

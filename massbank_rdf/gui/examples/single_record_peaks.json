@@ -6,10 +6,11 @@
     {"mz": 161.0597, "intensity": 999},
     {"mz": 179.0703, "intensity": 750}
   ],
-  "top_n": 10,
+  "top_n": 20,
   "mz_tolerance": 0.01,
   "min_matched_peaks": 3,
   "ion_mode": "Positive",
   "precursor_mz": 179.0697,
-  "precursor_tolerance": 0.01
+  "precursor_tolerance": 0.01,
+  "max_massbank_inchikey": 3
 }

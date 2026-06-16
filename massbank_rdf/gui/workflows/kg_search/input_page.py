@@ -66,6 +66,7 @@ def _load_example_search_query_values():
         data.get("ion_mode", ""),
         data.get("precursor_mz", None),
         data.get("precursor_tolerance", None),
+        data.get("max_massbank_inchikey", None),
     )
 
 EXAMPLE_PEAKS_TEXT = _peaks_to_text(EXAMPLE_SEARCH_QUERY.get("peaks", []))
@@ -161,6 +162,28 @@ def _normalize_ion_mode_for_db(ion_mode: str | None) -> str | None:
 
     return ion_mode
 
+def _normalize_optional_positive_int(
+    value: int | float | str | None,
+) -> int | None:
+    """Normalize optional positive integer value.
+
+    None, empty string, or NaN-like values are treated as None.
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, str) and not value.strip():
+        return None
+
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+
+    if number <= 0:
+        return None
+
+    return number
 
 def create_app(
     session_store: TemporarySessionStore,
@@ -174,6 +197,7 @@ def create_app(
         ion_mode: str,
         precursor_mz: float | None,
         precursor_tolerance: float | None,
+        max_massbank_inchikey: int | float | None,
         llm_enabled: bool,
         llm_output_language: str,
         azure_openai_endpoint: str,
@@ -195,7 +219,10 @@ def create_app(
         intensity_list = peak_array[:, 1]
 
         normalized_ion_mode = _normalize_ion_mode_for_db(ion_mode)
-
+        normalized_max_massbank_inchikey = _normalize_optional_positive_int(
+            max_massbank_inchikey
+        )
+        
         if precursor_mz is not None and precursor_tolerance is None:
             raise gr.Error(
                 "Precursor tolerance is required when precursor m/z is specified."
@@ -230,6 +257,11 @@ def create_app(
                 "precursor_tolerance": (
                     precursor_tolerance
                     if precursor_tolerance is not None
+                    else "-"
+                ),
+                "max_massbank_inchikey": (
+                    normalized_max_massbank_inchikey
+                    if normalized_max_massbank_inchikey is not None
                     else "-"
                 ),
             },
@@ -334,6 +366,18 @@ def create_app(
                         minimum=0,
                     )
 
+                with gr.Row():
+                    max_massbank_inchikey = gr.Number(
+                        label="Max MassBank InChIKey for KG",
+                        value=None,
+                        precision=0,
+                        minimum=1,
+                        info=(
+                            "Maximum number of unique MassBank InChIKeys used for KG lookup. "
+                            "Blank means all unique InChIKeys."
+                        ),
+                    )
+
 
 
                 gr.HTML("<h3>LLM Interpretation</h3>")
@@ -405,6 +449,7 @@ def create_app(
                     ion_mode,
                     precursor_mz,
                     precursor_tolerance,
+                    max_massbank_inchikey,
                 ],
             )
 
@@ -418,6 +463,7 @@ def create_app(
                     ion_mode,
                     precursor_mz,
                     precursor_tolerance,
+                    max_massbank_inchikey,
                     llm_enabled,
                     llm_output_language,
                     azure_openai_endpoint,

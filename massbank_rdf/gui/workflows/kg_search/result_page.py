@@ -43,6 +43,7 @@ def format_search_summary(payload: dict[str, Any]) -> str:
         f"Ion mode: {summary.get('ion_mode', '-')}\n"
         f"Precursor m/z: {summary.get('precursor_mz', '-')}\n"
         f"Precursor tolerance: {summary.get('precursor_tolerance', '-')}"
+        f"Max MassBank InChIKey for KG: {summary.get('max_massbank_inchikey', '-')}\n"
     )
 
 
@@ -89,7 +90,7 @@ def create_app(
     load_sparql_result = build_sparql_loader(
         session_store=session_store,
         kg_lookup_service=kg_lookup_service,
-        kg_n=3,
+        fallback_max_massbank_inchikey=None,
         limit=100,
     )
 
