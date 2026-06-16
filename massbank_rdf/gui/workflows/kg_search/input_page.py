@@ -1,47 +1,74 @@
 from __future__ import annotations
 
+from typing import Any
 from pathlib import Path
 
 import gradio as gr
 import numpy as np
 import pandas as pd
+import json
 
 from massbank_rdf.gui.session_store import TemporarySessionStore
+from massbank_rdf.db.massbank.database import MassBankDatabase
 
 
-EXAMPLE_PEAKS_PATH = (
+EXAMPLE_SEARCH_QUERY_PATH = (
     Path(__file__).resolve().parents[2]
     / "examples"
-    / "single_record_peaks.txt"
+    / "single_record_peaks.json"
 )
 
-EXAMPLE_PEAKS_TEXT = EXAMPLE_PEAKS_PATH.read_text(
-    encoding="utf-8",
-    errors="replace",
-)
+def _load_example_search_query() -> dict[str, Any]:
+    """Load example search query JSON as dict."""
+    with EXAMPLE_SEARCH_QUERY_PATH.open(
+        "r",
+        encoding="utf-8",
+        errors="replace",
+    ) as f:
+        data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError("Example search query JSON must be an object.")
+
+    return data
 
 
-def _read_uploaded_file_and_clear(
-    file_path: str | None,
-    current_text: str,
-) -> tuple[str, gr.update]:
-    """Read uploaded file text and clear the File component.
+EXAMPLE_SEARCH_QUERY = _load_example_search_query()
 
-    When file_path is None, keep current_text because clearing the File
-    component can trigger this function again.
-    """
-    if file_path is None:
-        return current_text, gr.update(value=None)
+def _peaks_to_text(peaks: list[dict[str, Any]]) -> str:
+    """Convert peak objects to whitespace-separated mz intensity text."""
+    lines: list[str] = []
 
-    path = Path(file_path)
+    for index, peak in enumerate(peaks, start=1):
+        if not isinstance(peak, dict):
+            raise ValueError(f"Peak at index {index} must be an object.")
 
-    if not path.exists():
-        return current_text, gr.update(value=None)
+        if "mz" not in peak or "intensity" not in peak:
+            raise ValueError(
+                f"Peak at index {index} must contain 'mz' and 'intensity'."
+            )
 
-    text = path.read_text(encoding="utf-8", errors="replace")
+        lines.append(f"{peak['mz']} {peak['intensity']}")
 
-    return text, gr.update(value=None)
+    return "\n".join(lines)
 
+def _load_example_search_query_values():
+    """Return example values for Gradio input components."""
+    data = EXAMPLE_SEARCH_QUERY
+
+    peak_text = _peaks_to_text(data.get("peaks", []))
+
+    return (
+        peak_text,
+        int(data.get("top_n", 10)),
+        float(data.get("mz_tolerance", 0.01)),
+        int(data.get("min_matched_peaks", 1)),
+        data.get("ion_mode", ""),
+        data.get("precursor_mz", None),
+        data.get("precursor_tolerance", None),
+    )
+
+EXAMPLE_PEAKS_TEXT = _peaks_to_text(EXAMPLE_SEARCH_QUERY.get("peaks", []))
 
 def _parse_peak_text_to_numpy(text: str) -> np.ndarray:
     """Parse whitespace/tab-separated mz intensity text into a numpy array.
@@ -116,6 +143,24 @@ def _peak_array_to_dataframe(peak_array: np.ndarray) -> pd.DataFrame:
         }
     )
 
+def _normalize_ion_mode_for_db(ion_mode: str | None) -> str | None:
+    """Convert UI ion mode label to database value."""
+    if ion_mode is None:
+        return None
+
+    ion_mode = ion_mode.strip()
+
+    if ion_mode == "":
+        return None
+
+    if ion_mode.lower() == "positive":
+        return "POSITIVE"
+
+    if ion_mode.lower() == "negative":
+        return "NEGATIVE"
+
+    return ion_mode
+
 
 def create_app(
     session_store: TemporarySessionStore,
@@ -123,26 +168,64 @@ def create_app(
 
     def _run_search_and_save_to_session(
         spectrum_text: str,
+        top_n: int,
+        mz_tolerance: float,
+        min_matched_peaks: int,
+        ion_mode: str,
+        precursor_mz: float | None,
+        precursor_tolerance: float | None,
         request: gr.Request,
     ) -> str:
-        """Parse peak text and save result DataFrame to session store."""
+        """Parse peak text, run MassBank search, and save result DataFrame."""
         session_id = request.request.cookies.get("kg_session_id")
 
         if not session_id:
             raise gr.Error("Session ID was not found. Please reload the page.")
 
         peak_array = _parse_peak_text_to_numpy(spectrum_text)
-        result_df = _peak_array_to_dataframe(peak_array)
+
+        mz_list = peak_array[:, 0]
+        intensity_list = peak_array[:, 1]
+
+        normalized_ion_mode = _normalize_ion_mode_for_db(ion_mode)
+
+        if precursor_mz is not None and precursor_tolerance is None:
+            raise gr.Error(
+                "Precursor tolerance is required when precursor m/z is specified."
+            )
+
+        db = MassBankDatabase()
+
+        result_df = db.search_record_ids_by_cosine_similarity_sql(
+            mz_list=mz_list,
+            intensity_list=intensity_list,
+            top_n=int(top_n),
+            mz_tolerance=float(mz_tolerance),
+            min_matched_peaks=int(min_matched_peaks),
+            ion_mode=normalized_ion_mode,
+            precursor_mz=precursor_mz,
+            precursor_tolerance=precursor_tolerance,
+        )
 
         session_store.set(
             session_id=session_id,
             value={
                 "result_df": result_df,
                 "summary": {
-                    "peak_count": len(result_df),
-                    "min_mz": float(result_df["mz"].min()),
-                    "max_mz": float(result_df["mz"].max()),
-                    "max_intensity": float(result_df["intensity"].max()),
+                    "peak_count": len(peak_array),
+                    "min_mz": float(mz_list.min()),
+                    "max_mz": float(mz_list.max()),
+                    "max_intensity": float(intensity_list.max()),
+                    "top_n": int(top_n),
+                    "mz_tolerance": float(mz_tolerance),
+                    "min_matched_peaks": int(min_matched_peaks),
+                    "ion_mode": normalized_ion_mode or "-",
+                    "precursor_mz": precursor_mz if precursor_mz is not None else "-",
+                    "precursor_tolerance": (
+                        precursor_tolerance
+                        if precursor_tolerance is not None
+                        else "-"
+                    ),
                 },
             },
         )
@@ -183,6 +266,54 @@ def create_app(
                     placeholder=EXAMPLE_PEAKS_TEXT,
                 )
 
+                gr.HTML("<h3>Search Conditions</h3>")
+
+                with gr.Row():
+                    top_n = gr.Number(
+                        label="Top N",
+                        value=10,
+                        precision=0,
+                        minimum=1,
+                    )
+
+                    mz_tolerance = gr.Number(
+                        label="m/z tolerance",
+                        value=0.01,
+                        precision=None,
+                        minimum=0,
+                    )
+
+                    min_matched_peaks = gr.Number(
+                        label="Min matched peaks",
+                        value=1,
+                        precision=0,
+                        minimum=1,
+                    )
+
+                with gr.Row():
+                    ion_mode = gr.Dropdown(
+                        label="Ion mode",
+                        choices=[
+                            "",
+                            "Positive",
+                            "Negative",
+                        ],
+                        value="",
+                    )
+
+                    precursor_mz = gr.Number(
+                        label="Precursor m/z",
+                        value=None,
+                        precision=None,
+                    )
+
+                    precursor_tolerance = gr.Number(
+                        label="Precursor tolerance",
+                        value=None,
+                        precision=None,
+                        minimum=0,
+                    )
+
                 run_button = gr.Button(
                     "Run",
                     elem_id="massbank-basic-search-button",
@@ -193,14 +324,30 @@ def create_app(
             )
 
             example_button.click(
-                fn=lambda: EXAMPLE_PEAKS_TEXT,
+                fn=_load_example_search_query_values,
                 inputs=[],
-                outputs=spectrum_text,
+                outputs=[
+                    spectrum_text,
+                    top_n,
+                    mz_tolerance,
+                    min_matched_peaks,
+                    ion_mode,
+                    precursor_mz,
+                    precursor_tolerance,
+                ],
             )
 
             run_button.click(
                 fn=_run_search_and_save_to_session,
-                inputs=spectrum_text,
+                inputs=[
+                    spectrum_text,
+                    top_n,
+                    mz_tolerance,
+                    min_matched_peaks,
+                    ion_mode,
+                    precursor_mz,
+                    precursor_tolerance,
+                ],
                 outputs=status_box,
             ).then(
                 fn=None,

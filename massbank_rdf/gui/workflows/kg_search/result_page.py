@@ -33,9 +33,18 @@ def _format_summary(payload: dict[str, Any]) -> str:
 
     return (
         "Search result was loaded from the current browser session.\n\n"
+        "[Input peaks]\n"
         f"Peak count: {summary.get('peak_count', '-')}\n"
+        f"Min m/z: {summary.get('min_mz', '-')}\n"
+        f"Max m/z: {summary.get('max_mz', '-')}\n"
+        f"Max intensity: {summary.get('max_intensity', '-')}\n\n"
+        "[Search conditions]\n"
+        f"Top N: {summary.get('top_n', '-')}\n"
+        f"m/z tolerance: {summary.get('mz_tolerance', '-')}\n"
+        f"Min matched peaks: {summary.get('min_matched_peaks', '-')}\n"
         f"Ion mode: {summary.get('ion_mode', '-')}\n"
         f"Precursor m/z: {summary.get('precursor_mz', '-')}\n"
+        f"Precursor tolerance: {summary.get('precursor_tolerance', '-')}\n"
     )
 
 
