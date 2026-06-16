@@ -6,7 +6,6 @@ import pandas as pd
 import gradio as gr
 
 from massbank_rdf.gui.session_store import TemporarySessionStore
-from massbank_rdf.services.kg.common import normalize_inchikey_values
 
 
 def make_empty_kg_dataframe() -> pd.DataFrame:
@@ -65,27 +64,11 @@ def create_kg_tab() -> tuple[
     )
 
 
-def _extract_inchikeys_from_massbank_df(
-    massbank_df: pd.DataFrame,
-    *,
-    kg_n: int = 3,
-) -> list[str]:
-    """Extract InChIKeys from MassBank display DataFrame."""
-    if massbank_df is None or massbank_df.empty:
-        return []
-
-    if "inchikey" not in massbank_df.columns:
-        return []
-
-    values = massbank_df["inchikey"].dropna().astype(str).tolist()
-
-    return normalize_inchikey_values(values)[:kg_n]
-
-
 def _get_kg_df(
     kg_data: dict[str, Any],
     key: str,
 ) -> pd.DataFrame:
+    """Get one KG result DataFrame."""
     value = kg_data.get(key, pd.DataFrame())
 
     if isinstance(value, pd.DataFrame):
@@ -94,16 +77,12 @@ def _get_kg_df(
     return pd.DataFrame(value)
 
 
-def build_kg_loader(
+def build_kg_display_loader(
     session_store: TemporarySessionStore,
-    kg_lookup_service: Any | None = None,
-    *,
-    kg_n: int = 3,
-    limit: int = 100,
 ):
-    """Build callback for loading KG result from MassBank InChIKeys."""
+    """Build callback for displaying saved KG result."""
 
-    def _load_kg_result(
+    def _load_saved_kg_result(
         request: gr.Request,
     ) -> tuple[
         str,
@@ -129,7 +108,7 @@ def build_kg_loader(
 
         if payload is None or not isinstance(payload, dict):
             return (
-                "No MassBank result was found. Please run MassBank search first.",
+                "No KG result was found. Please run search again.",
                 make_empty_kg_dataframe(),
                 make_empty_kg_dataframe(),
                 make_empty_kg_dataframe(),
@@ -137,55 +116,11 @@ def build_kg_loader(
                 gr.update(selected="kg"),
             )
 
-        massbank_df = payload.get("massbank_display_df")
+        kg_data = payload.get("kg_data", {})
+        inchikeys = payload.get("kg_inchikeys", [])
 
-        if massbank_df is None:
-            massbank_df = payload.get("result_df")
-
-        if massbank_df is None:
-            massbank_df = pd.DataFrame()
-        elif not isinstance(massbank_df, pd.DataFrame):
-            massbank_df = pd.DataFrame(massbank_df)
-
-        inchikeys = _extract_inchikeys_from_massbank_df(
-            massbank_df,
-            kg_n=kg_n,
-        )
-
-        if len(inchikeys) == 0:
-            return (
-                "No valid InChIKey was found in MassBank result.",
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                gr.update(selected="kg"),
-            )
-
-        if kg_lookup_service is None:
-            status = (
-                "KG lookup service is not configured yet.\n\n"
-                "Extracted InChIKeys:\n"
-                + "\n".join(inchikeys)
-            )
-
-            return (
-                status,
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                gr.update(selected="kg"),
-            )
-
-        kg_data = kg_lookup_service.search_by_inchikeys(
-            inchikeys,
-            limit=limit,
-        )
-
-        payload["kg_data"] = kg_data
-        payload["kg_inchikeys"] = inchikeys
-        session_store.set(session_id, payload)
+        if not isinstance(kg_data, dict):
+            kg_data = {}
 
         pubchem_compound_df = _get_kg_df(kg_data, "pubchem_compound")
         pubchem_pathway_df = _get_kg_df(kg_data, "pubchem_pathway")
@@ -193,8 +128,8 @@ def build_kg_loader(
         knapsack_activity_df = _get_kg_df(kg_data, "knapsack_activity")
 
         status = (
-            "KG lookup finished.\n\n"
-            f"InChIKeys: {', '.join(inchikeys)}\n"
+            "KG result was loaded from the current browser session.\n\n"
+            f"InChIKeys: {', '.join(inchikeys) if inchikeys else '-'}\n"
             f"PubChem compound rows: {len(pubchem_compound_df)}\n"
             f"PubChem pathway rows: {len(pubchem_pathway_df)}\n"
             f"HMDB rows: {len(hmdb_df)}\n"
@@ -210,4 +145,4 @@ def build_kg_loader(
             gr.update(selected="kg"),
         )
 
-    return _load_kg_result
+    return _load_saved_kg_result

@@ -5,12 +5,16 @@ from typing import Any
 import gradio as gr
 
 from massbank_rdf.gui.session_store import TemporarySessionStore
-from .result_tabs.massbank_tab import (
+from massbank_rdf.gui.workflows.kg_search.result_tabs.massbank_tab import (
     build_massbank_loader,
     create_massbank_tab,
 )
-from .result_tabs.kg_tab import (
-    build_kg_loader,
+from massbank_rdf.gui.workflows.kg_search.result_tabs.sparql_tab import (
+    build_sparql_loader,
+    create_sparql_tab,
+)
+from massbank_rdf.gui.workflows.kg_search.result_tabs.kg_tab import (
+    build_kg_display_loader,
     create_kg_tab,
 )
 
@@ -69,7 +73,7 @@ def create_app(
     session_store: TemporarySessionStore,
     kg_lookup_service: Any | None = None,
 ) -> gr.Blocks:
-    """Create KG search result page with separated tabs."""
+    """Create KG search result page with separated result tabs."""
 
     load_search_summary = build_summary_loader(
         session_store=session_store,
@@ -79,11 +83,15 @@ def create_app(
         session_store=session_store,
     )
 
-    load_kg_result = build_kg_loader(
+    load_sparql_result = build_sparql_loader(
         session_store=session_store,
         kg_lookup_service=kg_lookup_service,
         kg_n=3,
         limit=100,
+    )
+
+    load_kg_display_result = build_kg_display_loader(
+        session_store=session_store,
     )
 
     with gr.Blocks(title="Knowledge Graph Search - Result") as app:
@@ -101,8 +109,8 @@ def create_app(
                 <section class="massbank-page-heading">
                     <h1>Search Result</h1>
                     <p>
-                        MassBank search results and knowledge graph information
-                        are shown in separated tabs.
+                        MassBank results, generated SPARQL queries, and
+                        knowledge graph results are shown in separated tabs.
                     </p>
                 </section>
                 """
@@ -124,6 +132,15 @@ def create_app(
             with gr.Tabs(selected="massbank") as result_tabs:
                 with gr.Tab("MassBank", id="massbank"):
                     massbank_result_table = create_massbank_tab()
+
+                with gr.Tab("SPARQL", id="sparql"):
+                    (
+                        sparql_status_text,
+                        pubchem_compound_query,
+                        pubchem_pathway_query,
+                        hmdb_query,
+                        knapsack_activity_query,
+                    ) = create_sparql_tab()
 
                 with gr.Tab("KG", id="kg"):
                     (
@@ -158,11 +175,26 @@ def create_app(
                     result_tabs,
                 ],
             ).then(
-                fn=lambda: "MassBank result loaded. Loading KG data...",
+                fn=lambda: "MassBank result loaded. Generating SPARQL queries...",
                 inputs=[],
                 outputs=progress_text,
             ).then(
-                fn=load_kg_result,
+                fn=load_sparql_result,
+                inputs=[],
+                outputs=[
+                    sparql_status_text,
+                    pubchem_compound_query,
+                    pubchem_pathway_query,
+                    hmdb_query,
+                    knapsack_activity_query,
+                    result_tabs,
+                ],
+            ).then(
+                fn=lambda: "SPARQL queries generated. Loading KG result...",
+                inputs=[],
+                outputs=progress_text,
+            ).then(
+                fn=load_kg_display_result,
                 inputs=[],
                 outputs=[
                     kg_status_text,
