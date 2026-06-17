@@ -585,7 +585,7 @@
   ],
   "mz_tolerance": 0.01,
   "common_peak_n": 10,
-  "max_massbank_inchikey": 3,
+  "max_massbank_inchikey": 5,
   "massbank_top_n": 50,
   "min_matched_peaks": 3,
   "ion_mode": "Positive"

@@ -1,0 +1,22 @@
+Name: Caffeine
+Synon: 1,3,7-trimethylpurine-2,6-dione
+DB#: MSBNK-ACES_SU-AS000088
+InChI: InChI=1S/C8H10N4O2/c1-10-4-9-6-5(10)7(13)12(3)8(14)11(6)2/h4H,1-3H3
+SMILES: O=C1C2=C(N=CN2C)N(C(=O)N1C)C
+Precursor_type: [M+H]+
+Spectrum_type: MS2
+PrecursorMZ: 195.0878
+Instrument_type: LC-APCI-QFT
+Instrument: QExactive Orbitrap HF-X (Thermo Scientific)
+Ion_mode: POSITIVE
+Collision_energy: Ramp 20%-70% (nominal)
+Formula: C8H10N4O2
+MW: 194
+ExactMass: 194.0804
+Comments: Parent=195.0878
+Splash: splash10-0002-0900000000-b5a979ae7ba9d458755a
+Num Peaks: 4
+83.06039 51
+110.07135 136
+138.06645 353
+195.08772 999

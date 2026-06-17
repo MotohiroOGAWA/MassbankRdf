@@ -16,7 +16,7 @@ COMMON_PEAK_TAB_ID = "common_peaks"
 
 
 def make_empty_common_peak_dataframe() -> pd.DataFrame:
-    """Create empty common peak DataFrame."""
+    """Create empty common peak DataFrame for display."""
     return pd.DataFrame(
         columns=[
             "common_rank",
@@ -28,8 +28,6 @@ def make_empty_common_peak_dataframe() -> pd.DataFrame:
             "mean_intensity",
             "mz_min",
             "mz_max",
-            "record_indices",
-            "record_names",
         ]
     )
 
@@ -42,6 +40,52 @@ def create_common_peak_tab() -> gr.Dataframe:
         interactive=False,
         wrap=True,
     )
+
+
+def _make_common_peak_display_dataframe(
+    common_peaks_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Create common peak DataFrame for display.
+
+    Internal columns such as record_indices and record_names are kept in
+    payload["common_peaks_df"], but hidden from the Gradio table.
+    """
+    if common_peaks_df is None or common_peaks_df.empty:
+        return make_empty_common_peak_dataframe()
+
+    display_df = common_peaks_df.copy()
+
+    display_df = display_df.drop(
+        columns=[
+            "record_indices",
+            "record_names",
+        ],
+        errors="ignore",
+    )
+
+    first_columns = [
+        "common_rank",
+        "common_peak_id",
+        "mz_mean",
+        "record_count",
+        "peak_count",
+        "total_intensity",
+        "mean_intensity",
+        "mz_min",
+        "mz_max",
+    ]
+
+    ordered_columns: list[str] = []
+
+    for column in first_columns:
+        if column in display_df.columns:
+            ordered_columns.append(column)
+
+    for column in display_df.columns:
+        if column not in ordered_columns:
+            ordered_columns.append(column)
+
+    return display_df[ordered_columns]
 
 
 def _parse_peak_text_to_peak_records(
@@ -192,6 +236,9 @@ def build_common_peak_loader(
             mz_tolerance=mz_tolerance,
         )
 
+        # Keep the full DataFrame internally.
+        # record_indices and record_names are needed for internal use,
+        # but they are not shown in the display table.
         payload["records_count"] = len(records)
         payload["common_peaks_df"] = common_peaks_df
 
@@ -200,13 +247,17 @@ def build_common_peak_loader(
             value=payload,
         )
 
+        common_peak_display_df = _make_common_peak_display_dataframe(
+            common_peaks_df
+        )
+
         return (
             _format_common_peak_status(
                 payload=payload,
                 records_count=len(records),
                 common_peaks_df=common_peaks_df,
             ),
-            common_peaks_df,
+            common_peak_display_df,
             gr.update(selected=COMMON_PEAK_TAB_ID),
         )
 

@@ -17,8 +17,8 @@ def make_empty_massbank_hit_dataframe() -> pd.DataFrame:
     """Create empty MassBank hit DataFrame."""
     return pd.DataFrame(
         columns=[
-            "score",
             "match",
+            "intensity_mean",
             "accession_id",
             "name",
             "inchikey",
@@ -67,6 +67,125 @@ def _normalize_ion_mode_for_db(
         return "NEGATIVE"
 
     return value
+
+
+def _calculate_selected_common_peak_intensity_mean(
+    selected_common_peaks_df: pd.DataFrame,
+) -> float:
+    """Calculate mean intensity from selected common peaks.
+
+    Notes
+    -----
+    The current MassBank hit table does not contain peak-level match details.
+    Therefore, this value is calculated from the selected common peaks used
+    for the MassBank search.
+    """
+    if selected_common_peaks_df is None or selected_common_peaks_df.empty:
+        return 0.0
+
+    if "mean_intensity" not in selected_common_peaks_df.columns:
+        return 0.0
+
+    intensity_series = pd.to_numeric(
+        selected_common_peaks_df["mean_intensity"],
+        errors="coerce",
+    ).dropna()
+
+    if intensity_series.empty:
+        return 0.0
+
+    return float(intensity_series.mean())
+
+
+def _prepare_massbank_hit_dataframe(
+    massbank_hits_df: pd.DataFrame,
+    *,
+    selected_common_peaks_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Prepare MassBank hit DataFrame for display.
+
+    The score column is removed.
+    The table is sorted by match and intensity_mean in descending order.
+    """
+    if massbank_hits_df is None or massbank_hits_df.empty:
+        return make_empty_massbank_hit_dataframe()
+
+    display_df = massbank_hits_df.copy()
+
+    # Remove cosine score from the display table.
+    display_df = display_df.drop(
+        columns=["score"],
+        errors="ignore",
+    )
+
+    # Add intensity_mean for display and sorting.
+    #
+    # Current MassBank search result does not keep peak-level matched
+    # common peak information. Therefore this intensity_mean is calculated
+    # from the selected common peaks used for the search.
+    display_df["intensity_mean"] = _calculate_selected_common_peak_intensity_mean(
+        selected_common_peaks_df
+    )
+
+    if "match" in display_df.columns:
+        display_df["match"] = pd.to_numeric(
+            display_df["match"],
+            errors="coerce",
+        )
+
+    display_df["intensity_mean"] = (
+        pd.to_numeric(
+            display_df["intensity_mean"],
+            errors="coerce",
+        )
+        .round(3)
+    )
+
+    sort_columns: list[str] = []
+
+    if "match" in display_df.columns:
+        sort_columns.append("match")
+
+    if "intensity_mean" in display_df.columns:
+        sort_columns.append("intensity_mean")
+
+    if sort_columns:
+        display_df = display_df.sort_values(
+            by=sort_columns,
+            ascending=[False] * len(sort_columns),
+        ).reset_index(drop=True)
+
+    first_columns = [
+        "match",
+        "intensity_mean",
+        "accession_id",
+        "name",
+        "inchikey",
+        "smiles",
+        "formula",
+        "precursor_mz",
+        "precursor_type",
+        "ion_mode",
+        "ms_type",
+        "collision_energy",
+        "retention_time",
+        "instrument_type",
+        "ionization",
+        "fragmentation_mode",
+        "splash",
+    ]
+
+    ordered_columns: list[str] = []
+
+    for column in first_columns:
+        if column in display_df.columns:
+            ordered_columns.append(column)
+
+    for column in display_df.columns:
+        if column not in ordered_columns:
+            ordered_columns.append(column)
+
+    return display_df[ordered_columns]
 
 
 def build_massbank_hit_loader(
@@ -149,7 +268,7 @@ def build_massbank_hit_loader(
             "selected_common_peaks",
             pd.DataFrame(),
         )
-        massbank_hits_df = annotation_result.get(
+        raw_massbank_hits_df = annotation_result.get(
             "massbank_hits",
             pd.DataFrame(),
         )
@@ -158,11 +277,17 @@ def build_massbank_hit_loader(
             pd.DataFrame(),
         )
 
+        massbank_hits_df = _prepare_massbank_hit_dataframe(
+            raw_massbank_hits_df,
+            selected_common_peaks_df=selected_common_peaks_df,
+        )
+
         payload["selected_common_peaks_df"] = selected_common_peaks_df
         payload["massbank_hits_df"] = massbank_hits_df
 
         # Important:
         # Reused SPARQL tab reads payload["massbank_display_df"] and extracts inchikey.
+        # This DataFrame no longer contains score.
         payload["massbank_display_df"] = massbank_hits_df
 
         payload["peak_annotations_df"] = peak_annotations_df
