@@ -99,7 +99,7 @@ class KgLookupService:
         inchikey_column: str = "inchikey",
         top_n: int = 10,
         kg_n: int = 3,
-        limit: int = 100,
+        limit: int | None = 100,
         return_query: bool = False,
     ):
         """Search KG evidence by InChIKeys in MassBank search result table.
@@ -170,7 +170,7 @@ class KgLookupService:
         self,
         inchikey: str,
         *,
-        limit: int = 100,
+        limit: int | None = 100,
         return_query: bool = False,
     ):
         """Search KG evidence by one InChIKey."""
@@ -184,7 +184,7 @@ class KgLookupService:
         self,
         inchikeys: list[str],
         *,
-        limit: int = 100,
+        limit: int | None = 100,
         return_query: bool = False,
     ):
         """Search KG evidence by multiple InChIKeys."""

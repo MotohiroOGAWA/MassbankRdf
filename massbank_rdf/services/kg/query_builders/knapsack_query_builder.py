@@ -3,6 +3,13 @@ from __future__ import annotations
 from ..common import sparql_values
 
 
+def sparql_limit_clause(limit: int | None) -> str:
+    if limit is None:
+        return ""
+
+    return f"LIMIT {max(1, int(limit))}"
+
+
 def build_from_clause(
     use_from_graph: bool,
     graph_iri: str | None,
@@ -20,10 +27,10 @@ def build_knapsack_activity_query(
     inchikeys: list[str],
     use_from_graph: bool = True,
     graph_iri: str = "http://example.org/graph/knapsack",
-    limit: int = 500,
+    limit: int | None = 500,
 ) -> str:
-    limit = max(1, int(limit))
     from_clause = build_from_clause(use_from_graph, graph_iri)
+    limit_clause = sparql_limit_clause(limit)
 
     return f"""
 PREFIX knapsack: <http://purl.jp/knapsack/resource#>
@@ -112,5 +119,5 @@ WHERE {{
   }}
 }}
 ORDER BY ?value_inchikey ?knapsack_id ?activity_label
-LIMIT {limit}
+{limit_clause}
 """

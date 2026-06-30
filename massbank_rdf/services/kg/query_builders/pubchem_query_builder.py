@@ -3,11 +3,18 @@ from __future__ import annotations
 from ..common import sparql_values
 
 
+def sparql_limit_clause(limit: int | None) -> str:
+    if limit is None:
+        return ""
+
+    return f"LIMIT {max(1, int(limit))}"
+
+
 def build_pubchem_compound_query(
     inchikeys: list[str],
-    limit: int = 100,
+    limit: int | None = 100,
 ) -> str:
-    limit = max(1, int(limit))
+    limit_clause = sparql_limit_clause(limit)
 
     return f"""
 PREFIX sio: <http://semanticscience.org/resource/>
@@ -42,15 +49,15 @@ WHERE {{
     ))
   }}
 }}
-LIMIT {limit}
+{limit_clause}
 """
 
 
 def build_pubchem_pathway_query(
     inchikeys: list[str],
-    limit: int = 100,
+    limit: int | None = 100,
 ) -> str:
-    limit = max(1, int(limit))
+    limit_clause = sparql_limit_clause(limit)
 
     return f"""
 PREFIX sio: <http://semanticscience.org/resource/>
@@ -82,5 +89,5 @@ WHERE {{
 
   OPTIONAL {{ ?pathway up:organism ?pathway_organism . }}
 }}
-LIMIT {limit}
+{limit_clause}
 """

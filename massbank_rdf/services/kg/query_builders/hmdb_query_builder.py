@@ -3,6 +3,13 @@ from __future__ import annotations
 from ..common import normalize_inchikey_values
 
 
+def sparql_limit_clause(limit: int | None) -> str:
+    if limit is None:
+        return ""
+
+    return f"LIMIT {max(1, int(limit))}"
+
+
 def sparql_inchikey_uri_values(
     variable: str,
     inchikeys: list[str],
@@ -22,9 +29,9 @@ def sparql_inchikey_uri_values(
 
 def build_hmdb_query(
     inchikeys: list[str],
-    limit: int = 100,
+    limit: int | None = 100,
 ) -> str:
-    limit = max(1, int(limit))
+    limit_clause = sparql_limit_clause(limit)
 
     return f"""
 PREFIX hmdb: <https://hmdb.ca/resource/>
@@ -77,5 +84,5 @@ WHERE {{
 
   OPTIONAL {{ ?hmdb_metabolite hmdbv:biospecimenLocation ?hmdb_biospecimen . }}
 }}
-LIMIT {limit}
+{limit_clause}
 """
