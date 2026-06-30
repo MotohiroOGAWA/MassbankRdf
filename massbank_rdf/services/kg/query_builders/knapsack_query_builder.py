@@ -41,20 +41,20 @@ PREFIX cheminf: <http://semanticscience.org/resource/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX foaf: <http://xmlns.com/foaf/0.1/>
 
-SELECT DISTINCT
+SELECT
   ?value_inchikey
   ?knapsack_id
-  ?molecular_entity_name
-  ?molecular_formula
-  ?value_mw
-  ?activity_record_label
-  ?activity_category
-  ?activity_function
-  ?activity_target_species
+  (SAMPLE(?molecular_entity_name_value) AS ?molecular_entity_name)
+  (SAMPLE(?molecular_formula_value) AS ?molecular_formula)
+  (SAMPLE(?value_mw_value) AS ?value_mw)
+  (SAMPLE(?activity_record_label_value) AS ?activity_record_label)
+  (GROUP_CONCAT(DISTINCT STR(?activity_category_value); separator="|") AS ?activity_category)
+  (GROUP_CONCAT(DISTINCT STR(?activity_function_value); separator="|") AS ?activity_function)
+  (GROUP_CONCAT(DISTINCT STR(?activity_target_species_value); separator="|") AS ?activity_target_species)
   ?activity
   ?activity_label
-  ?rdfs_seealso
-  ?foaf_homepage
+  (GROUP_CONCAT(DISTINCT STR(?rdfs_seealso_value); separator="|") AS ?rdfs_seealso)
+  (GROUP_CONCAT(DISTINCT STR(?foaf_homepage_value); separator="|") AS ?foaf_homepage)
 {from_clause}
 WHERE {{
   {sparql_values("query_inchikey", inchikeys)}
@@ -85,32 +85,32 @@ WHERE {{
   OPTIONAL {{
     ?KNApSAcKRecord sio:SIO_000008 ?MolecularEntityName .
     ?MolecularEntityName a cheminf:CHEMINF_000043 ;
-      sio:SIO_000300 ?molecular_entity_name .
+      sio:SIO_000300 ?molecular_entity_name_value .
   }}
 
   OPTIONAL {{
     ?KNApSAcKRecord sio:SIO_000008 ?MolecularFormula .
     ?MolecularFormula a cheminf:CHEMINF_000042 ;
-      sio:SIO_000300 ?molecular_formula .
+      sio:SIO_000300 ?molecular_formula_value .
   }}
 
   OPTIONAL {{
     ?KNApSAcKRecord sio:SIO_000008 ?MolecularWeight .
     ?MolecularWeight a cheminf:CHEMINF_000334 ;
-      sio:SIO_000300 ?value_mw .
+      sio:SIO_000300 ?value_mw_value .
   }}
 
-  OPTIONAL {{ ?KNApSAcKRecord rdfs:seeAlso ?rdfs_seealso . }}
-  OPTIONAL {{ ?KNApSAcKRecord foaf:homepage ?foaf_homepage . }}
+  OPTIONAL {{ ?KNApSAcKRecord rdfs:seeAlso ?rdfs_seealso_value . }}
+  OPTIONAL {{ ?KNApSAcKRecord foaf:homepage ?foaf_homepage_value . }}
 
   OPTIONAL {{
     ?KNApSAcKRecord a knapsack:KNApSAcKMetaboliteActivityRecord .
   }}
 
-  OPTIONAL {{ ?KNApSAcKRecord rdfs:label ?activity_record_label . }}
-  OPTIONAL {{ ?KNApSAcKRecord knapsack:category ?activity_category . }}
-  OPTIONAL {{ ?KNApSAcKRecord knapsack:function ?activity_function . }}
-  OPTIONAL {{ ?KNApSAcKRecord knapsack:targetsp ?activity_target_species . }}
+  OPTIONAL {{ ?KNApSAcKRecord rdfs:label ?activity_record_label_value . }}
+  OPTIONAL {{ ?KNApSAcKRecord knapsack:category ?activity_category_value . }}
+  OPTIONAL {{ ?KNApSAcKRecord knapsack:function ?activity_function_value . }}
+  OPTIONAL {{ ?KNApSAcKRecord knapsack:targetsp ?activity_target_species_value . }}
 
   OPTIONAL {{
     ?KNApSAcKRecord sio:SIO_000225 ?activity .
@@ -118,6 +118,7 @@ WHERE {{
     OPTIONAL {{ ?activity rdfs:label ?activity_label . }}
   }}
 }}
+GROUP BY ?value_inchikey ?knapsack_id ?activity ?activity_label
 ORDER BY ?value_inchikey ?knapsack_id ?activity_label
 {limit_clause}
 """

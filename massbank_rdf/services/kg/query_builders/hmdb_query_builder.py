@@ -41,21 +41,21 @@ PREFIX inchikey: <http://identifiers.org/inchikey/>
 PREFIX dct: <http://purl.org/dc/terms/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-SELECT DISTINCT
+SELECT
   ?value_inchikey
   ?hmdb_metabolite
   ?hmdb_accession
-  ?hmdb_label
-  ?hmdb_formula
-  ?hmdb_avg_mw
-  ?hmdb_mono_mw
-  ?hmdb_smiles
-  ?hmdb_inchi
-  ?hmdb_pathway
-  ?hmdb_pathway_label
-  ?hmdb_disease
-  ?hmdb_disease_label
-  ?hmdb_biospecimen
+  (SAMPLE(?hmdb_label_value) AS ?hmdb_label)
+  (SAMPLE(?hmdb_formula_value) AS ?hmdb_formula)
+  (SAMPLE(?hmdb_avg_mw_value) AS ?hmdb_avg_mw)
+  (SAMPLE(?hmdb_mono_mw_value) AS ?hmdb_mono_mw)
+  (SAMPLE(?hmdb_smiles_value) AS ?hmdb_smiles)
+  (SAMPLE(?hmdb_inchi_value) AS ?hmdb_inchi)
+  (GROUP_CONCAT(DISTINCT STR(?hmdb_pathway_value); separator="|") AS ?hmdb_pathway)
+  (GROUP_CONCAT(DISTINCT STR(?hmdb_pathway_label_value); separator="|") AS ?hmdb_pathway_label)
+  (GROUP_CONCAT(DISTINCT STR(?hmdb_disease_value); separator="|") AS ?hmdb_disease)
+  (GROUP_CONCAT(DISTINCT STR(?hmdb_disease_label_value); separator="|") AS ?hmdb_disease_label)
+  (GROUP_CONCAT(DISTINCT STR(?hmdb_biospecimen_value); separator="|") AS ?hmdb_biospecimen)
 WHERE {{
   {sparql_inchikey_uri_values("ik_uri", inchikeys)}
 
@@ -65,24 +65,25 @@ WHERE {{
 
   BIND(REPLACE(STR(?ik_uri), "^.*/", "") AS ?value_inchikey)
 
-  OPTIONAL {{ ?hmdb_metabolite rdfs:label ?hmdb_label . }}
-  OPTIONAL {{ ?hmdb_metabolite hmdbv:chemicalFormula ?hmdb_formula . }}
-  OPTIONAL {{ ?hmdb_metabolite hmdbv:averageMolecularWeight ?hmdb_avg_mw . }}
-  OPTIONAL {{ ?hmdb_metabolite hmdbv:monoisotopicMolecularWeight ?hmdb_mono_mw . }}
-  OPTIONAL {{ ?hmdb_metabolite hmdbv:smiles ?hmdb_smiles . }}
-  OPTIONAL {{ ?hmdb_metabolite hmdbv:inchi ?hmdb_inchi . }}
+  OPTIONAL {{ ?hmdb_metabolite rdfs:label ?hmdb_label_value . }}
+  OPTIONAL {{ ?hmdb_metabolite hmdbv:chemicalFormula ?hmdb_formula_value . }}
+  OPTIONAL {{ ?hmdb_metabolite hmdbv:averageMolecularWeight ?hmdb_avg_mw_value . }}
+  OPTIONAL {{ ?hmdb_metabolite hmdbv:monoisotopicMolecularWeight ?hmdb_mono_mw_value . }}
+  OPTIONAL {{ ?hmdb_metabolite hmdbv:smiles ?hmdb_smiles_value . }}
+  OPTIONAL {{ ?hmdb_metabolite hmdbv:inchi ?hmdb_inchi_value . }}
 
   OPTIONAL {{
-    ?hmdb_metabolite hmdbv:participatesInPathway ?hmdb_pathway .
-    OPTIONAL {{ ?hmdb_pathway rdfs:label ?hmdb_pathway_label . }}
+    ?hmdb_metabolite hmdbv:participatesInPathway ?hmdb_pathway_value .
+    OPTIONAL {{ ?hmdb_pathway_value rdfs:label ?hmdb_pathway_label_value . }}
   }}
 
   OPTIONAL {{
-    ?hmdb_metabolite hmdbv:associatedWithDisease ?hmdb_disease .
-    OPTIONAL {{ ?hmdb_disease rdfs:label ?hmdb_disease_label . }}
+    ?hmdb_metabolite hmdbv:associatedWithDisease ?hmdb_disease_value .
+    OPTIONAL {{ ?hmdb_disease_value rdfs:label ?hmdb_disease_label_value . }}
   }}
 
-  OPTIONAL {{ ?hmdb_metabolite hmdbv:biospecimenLocation ?hmdb_biospecimen . }}
+  OPTIONAL {{ ?hmdb_metabolite hmdbv:biospecimenLocation ?hmdb_biospecimen_value . }}
 }}
+GROUP BY ?value_inchikey ?hmdb_metabolite ?hmdb_accession
 {limit_clause}
 """
