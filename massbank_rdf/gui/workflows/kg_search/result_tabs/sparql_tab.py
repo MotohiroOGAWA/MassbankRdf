@@ -146,8 +146,9 @@ def build_sparql_loader(
       1. Reads MassBank display result from session.
       2. Extracts InChIKeys.
       3. Runs KG lookup with return_query=True.
-      4. Stores kg_data and kg_queries in session.
-      5. Shows generated SPARQL queries in the SPARQL tab.
+      4. Converts KG lookup tables to compact KG evidence JSON.
+      5. Stores kg_evidence and kg_queries in session.
+      6. Shows generated SPARQL queries in the SPARQL tab.
     """
 
     def _load_sparql_and_run_kg(
@@ -247,15 +248,16 @@ def build_sparql_loader(
                 gr.update(selected="sparql"),
             )
 
-        kg_data, kg_queries = kg_lookup_service.search_by_inchikeys(
+        kg_evidence, kg_queries = kg_lookup_service.search_evidence_by_inchikeys(
             inchikeys,
             limit=limit,
             return_query=True,
         )
 
         payload["kg_inchikeys"] = inchikeys
-        payload["kg_data"] = kg_data
+        payload["kg_evidence"] = kg_evidence
         payload["kg_queries"] = kg_queries
+        payload.pop("kg_data", None)
         session_store.set(session_id, payload)
 
         limit_label = (

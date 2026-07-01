@@ -20,6 +20,9 @@ from massbank_rdf.services.kg.query_builders.pubchem_query_builder import (
     build_pubchem_compound_query,
     build_pubchem_pathway_query,
 )
+from massbank_rdf.services.llm_interpretation.kg_evidence_builder import (
+    build_kg_evidence_from_kg_data,
+)
 
 
 @dataclass(frozen=True)
@@ -133,6 +136,30 @@ class KgLookupService:
             return_query=return_query,
         )
 
+
+    def search_evidence_by_massbank_records(
+        self,
+        massbank_result_df: pd.DataFrame,
+        *,
+        inchikey_column: str = "inchikey",
+        top_n: int = 10,
+        kg_n: int = 3,
+        limit: int | None = 100,
+        return_query: bool = False,
+    ):
+        """Search KG evidence JSON by InChIKeys in MassBank results."""
+        inchikeys = self.extract_inchikeys_from_massbank_records(
+            massbank_result_df,
+            inchikey_column=inchikey_column,
+            top_n=top_n,
+            kg_n=kg_n,
+        )
+        return self.search_evidence_by_inchikeys(
+            inchikeys,
+            limit=limit,
+            return_query=return_query,
+        )
+
     def extract_inchikeys_from_massbank_records(
         self,
         massbank_result_df: pd.DataFrame,
@@ -165,6 +192,41 @@ class KgLookupService:
         ]
 
         return normalize_inchikey_values(inchikeys)[: max(1, int(kg_n))]
+
+
+    def search_evidence_by_inchikey(
+        self,
+        inchikey: str,
+        *,
+        limit: int | None = 100,
+        return_query: bool = False,
+    ):
+        """Search compact KG evidence JSON by one InChIKey."""
+        return self.search_evidence_by_inchikeys(
+            [inchikey],
+            limit=limit,
+            return_query=return_query,
+        )
+
+    def search_evidence_by_inchikeys(
+        self,
+        inchikeys: list[str],
+        *,
+        limit: int | None = 100,
+        return_query: bool = False,
+    ):
+        """Search compact KG evidence JSON by multiple InChIKeys."""
+        result = self.search_by_inchikeys(
+            inchikeys,
+            limit=limit,
+            return_query=return_query,
+        )
+
+        if return_query:
+            kg_data, queries = result
+            return build_kg_evidence_from_kg_data(kg_data), queries
+
+        return build_kg_evidence_from_kg_data(result)
 
     def search_by_inchikey(
         self,

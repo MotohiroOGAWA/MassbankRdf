@@ -153,12 +153,8 @@ def create_app(
                 with gr.Tab("KG", id="kg"):
                     (
                         kg_status_text,
-                        pubchem_compound_table,
-                        pubchem_pathway_table,
-                        hmdb_table,
-                        knapsack_activity_table,
+                        kg_evidence_json,
                         kg_json_file,
-                        kg_csv_zip_file,
                     ) = create_kg_tab()
 
                 with gr.Tab("Interpretation", id="interpretation"):
@@ -215,12 +211,8 @@ def create_app(
                 inputs=[],
                 outputs=[
                     kg_status_text,
-                    pubchem_compound_table,
-                    pubchem_pathway_table,
-                    hmdb_table,
-                    knapsack_activity_table,
+                    kg_evidence_json,
                     kg_json_file,
-                    kg_csv_zip_file,
                     result_tabs,
                 ],
             ).then(

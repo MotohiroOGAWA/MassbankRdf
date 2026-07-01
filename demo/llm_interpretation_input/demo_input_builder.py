@@ -96,8 +96,7 @@ def build_llm_interpretation_demo_input(
     The returned object contains:
     - original input text, parsed metadata, and parsed peaks
     - MassBank search result records
-    - four KG table record lists keyed by KG source table name
-    - compact KG evidence JSON already used by the interpretation service
+    - compact KG evidence JSON for downstream LLM interpretation
     """
     parsed = parse_spectrum_input(input_text)
     db = massbank_db or MassBankDatabase()
@@ -126,21 +125,16 @@ def build_llm_interpretation_demo_input(
         precursor_tolerance=precursor_tolerance,
     )
 
-    kg_tables = _empty_kg_tables()
-
     if kg_lookup_service is not None:
-        kg_tables = kg_lookup_service.search_by_massbank_records(
+        kg_evidence = kg_lookup_service.search_evidence_by_massbank_records(
             massbank_result_df,
             inchikey_column="inchikey",
             top_n=top_n,
             kg_n=kg_n,
             limit=kg_limit,
         )
-
-    kg_table_records = {
-        key: _df_to_records(kg_tables.get(key))
-        for key in KG_TABLE_KEYS
-    }
+    else:
+        kg_evidence = build_kg_evidence_from_kg_data(_empty_kg_tables())
 
     return {
         "input": {
@@ -160,8 +154,7 @@ def build_llm_interpretation_demo_input(
             "kg_limit": kg_limit,
         },
         "massbank_records": _df_to_records(massbank_result_df),
-        "kg_tables": kg_table_records,
-        "kg_evidence": build_kg_evidence_from_kg_data(kg_tables),
+        "kg_evidence": kg_evidence,
     }
 
 

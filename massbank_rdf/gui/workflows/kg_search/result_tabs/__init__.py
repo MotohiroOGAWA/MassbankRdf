@@ -13,7 +13,7 @@ from .sparql_tab import (
 from .kg_tab import (
     build_kg_display_loader,
     create_kg_tab,
-    make_empty_kg_dataframe,
+    make_empty_kg_evidence,
 )
 
 __all__ = [
@@ -25,5 +25,5 @@ __all__ = [
     "create_sparql_tab",
     "build_kg_display_loader",
     "create_kg_tab",
-    "make_empty_kg_dataframe",
+    "make_empty_kg_evidence",
 ]

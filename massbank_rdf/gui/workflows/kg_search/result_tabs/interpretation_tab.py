@@ -167,15 +167,19 @@ def build_interpretation_loader(
                 gr.update(selected="interpretation"),
             )
 
+        kg_evidence = payload.get("kg_evidence")
         kg_data = payload.get("kg_data", {})
 
-        if not isinstance(kg_data, dict) or not kg_data:
-            return (
-                "No KG data was found. LLM interpretation was skipped.",
-                make_empty_interpretation_json(),
-                None,
-                gr.update(selected="interpretation"),
-            )
+        if not isinstance(kg_evidence, dict):
+            if isinstance(kg_data, dict) and kg_data:
+                kg_evidence = build_kg_evidence_from_kg_data(kg_data)
+            else:
+                return (
+                    "No KG evidence was found. LLM interpretation was skipped.",
+                    make_empty_interpretation_json(),
+                    None,
+                    gr.update(selected="interpretation"),
+                )
 
         required_keys = [
             "endpoint",
@@ -196,10 +200,6 @@ def build_interpretation_loader(
                 None,
                 gr.update(selected="interpretation"),
             )
-
-        kg_evidence = build_kg_evidence_from_kg_data(
-            kg_data
-        )
 
         interpreter = AzureOpenAIInterpreter(
             AzureOpenAIInterpretationConfig(

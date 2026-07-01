@@ -10,6 +10,7 @@ import pandas as pd
 from massbank_rdf.db.massbank.database import MassBankDatabase
 
 from demo.llm_interpretation_input.demo_input_builder import KG_TABLE_KEYS
+from massbank_rdf.services.llm_interpretation import build_kg_evidence_from_kg_data
 from massbank_rdf.models import MSPRecord
 
 def _build_kg_lookup_service():
@@ -37,7 +38,7 @@ def build_demo_data_from_msp_file(
     Saved outputs include:
     - MSP metadata as pandas DataFrame and peaks as numpy array
     - MassBank search result records as pandas DataFrame
-    - KG lookup result tables as pandas DataFrames
+    - KG lookup result as compact JSON evidence
     """
     input_path = Path(input_file).resolve()
     output_path = Path(output_dir).resolve()
@@ -65,21 +66,22 @@ def build_demo_data_from_msp_file(
         output_path / "massbank_records",
     )
 
-    kg_tables = _empty_kg_tables()
     if run_kg_lookup:
         kg_lookup_service = _build_kg_lookup_service()
-        kg_tables = kg_lookup_service.search_by_massbank_records(
+        kg_evidence = kg_lookup_service.search_evidence_by_massbank_records(
             massbank_records,
             inchikey_column="inchikey",
             top_n=top_n,
             kg_n=kg_n,
             limit=kg_limit,
         )
-
-    kg_manifest = _save_kg_tables(
-        kg_tables,
-        output_path / "kg_tables",
+    else:
+        kg_evidence = build_kg_evidence_from_kg_data(_empty_kg_tables())
+    kg_manifest = _save_json(
+        kg_evidence,
+        output_path / "kg_evidence.json",
     )
+    _remove_stale_kg_table_files(output_path / "kg_tables")
 
     manifest = {
         "input_file": str(input_path),
@@ -97,7 +99,7 @@ def build_demo_data_from_msp_file(
         },
         "msp_record": msp_manifest,
         "massbank_records": massbank_manifest,
-        "kg_tables": kg_manifest,
+        "kg_evidence": kg_manifest,
     }
 
     manifest_path = output_path / "manifest.json"
@@ -139,21 +141,30 @@ def _save_dataframe(
     }
 
 
-def _save_kg_tables(
-    kg_tables: dict[str, pd.DataFrame],
-    output_dir: str | Path,
+def _save_json(
+    data: dict[str, Any],
+    path: str | Path,
 ) -> dict[str, Any]:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    features = data.get("features", [])
+    return {
+        "json": str(output_path),
+        "features": len(features) if isinstance(features, list) else 0,
+    }
+
+
+def _remove_stale_kg_table_files(
+    output_dir: str | Path,
+) -> None:
     base_dir = Path(output_dir)
-    base_dir.mkdir(parents=True, exist_ok=True)
-
-    manifest: dict[str, Any] = {}
     for key in KG_TABLE_KEYS:
-        table = kg_tables.get(key)
-        if table is None:
-            table = pd.DataFrame()
-        manifest[key] = _save_dataframe(table, base_dir / key)
-
-    return manifest
+        for suffix in [".tsv", ".csv", ".pkl"]:
+            (base_dir / f"{key}{suffix}").unlink(missing_ok=True)
 
 
 def _empty_kg_tables() -> dict[str, pd.DataFrame]:
