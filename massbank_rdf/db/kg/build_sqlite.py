@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -97,6 +98,20 @@ def parse_args() -> argparse.Namespace:
             "kg_inchikeys.queried_at is already set. Implies --no-recreate."
         ),
     )
+    parser.add_argument(
+        "--kg-json-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory for raw KG lookup batch JSON files. Defaults to "
+            "<kg-db-dir>/kg_lookup_batches."
+        ),
+    )
+    parser.add_argument(
+        "--no-save-kg-json",
+        action="store_true",
+        help="Do not save raw KG lookup results as per-batch JSON files.",
+    )
     return parser.parse_args()
 
 
@@ -115,6 +130,40 @@ def chunked(values: list[str], batch_size: int) -> Iterable[list[str]]:
         yield values[start:start + batch_size]
 
 
+def dataframe_to_json_records(df: pd.DataFrame) -> list[dict[str, object]]:
+    if df is None or df.empty:
+        return []
+    clean_df = df.astype(object).where(pd.notna(df), None)
+    return clean_df.to_dict(orient="records")
+
+
+def save_kg_batch_json(
+    *,
+    output_dir: Path,
+    batch_index: int,
+    batch: list[str],
+    data: dict[str, pd.DataFrame],
+    queried_at: datetime,
+    suffix: str | None = None,
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suffix_part = f"_{suffix}" if suffix else ""
+    output_path = output_dir / f"kg_batch_{batch_index:06d}{suffix_part}.json"
+    payload = {
+        "batch_index": batch_index,
+        "inchikeys": batch,
+        "queried_at": queried_at.isoformat(),
+        "sources": {
+            source_name: dataframe_to_json_records(frame)
+            for source_name, frame in data.items()
+        },
+    }
+    output_path.write_bytes(
+        json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    )
+    return output_path
+
+
 def import_batch_kg_data(
     *,
     service,
@@ -123,8 +172,21 @@ def import_batch_kg_data(
     batch: list[str],
     sparql_limit: int | None,
     queried_at: datetime,
+    batch_index: int,
+    kg_json_dir: Path | None,
+    json_suffix: str | None = None,
 ) -> None:
     data = service.search_by_inchikeys(batch, limit=sparql_limit)
+    if kg_json_dir is not None:
+        save_kg_batch_json(
+            output_dir=kg_json_dir,
+            batch_index=batch_index,
+            batch=batch,
+            data=data,
+            queried_at=queried_at,
+            suffix=json_suffix,
+        )
+
     batch_summary = summary_by_inchikey.loc[
         summary_by_inchikey.index.intersection(batch)
     ].reset_index(drop=True)
@@ -144,6 +206,8 @@ def import_batch_with_timeout_fallback(
     batch: list[str],
     sparql_limit: int | None,
     queried_at: datetime,
+    batch_index: int,
+    kg_json_dir: Path | None,
 ) -> None:
     try:
         import_batch_kg_data(
@@ -153,6 +217,8 @@ def import_batch_with_timeout_fallback(
             batch=batch,
             sparql_limit=sparql_limit,
             queried_at=queried_at,
+            batch_index=batch_index,
+            kg_json_dir=kg_json_dir,
         )
         return
     except RETRYABLE_KG_EXCEPTIONS as error:
@@ -172,7 +238,7 @@ def import_batch_with_timeout_fallback(
             flush=True,
         )
 
-    for inchikey in batch:
+    for retry_index, inchikey in enumerate(batch, start=1):
         try:
             import_batch_kg_data(
                 service=service,
@@ -181,6 +247,9 @@ def import_batch_with_timeout_fallback(
                 batch=[inchikey],
                 sparql_limit=sparql_limit,
                 queried_at=queried_at,
+                batch_index=batch_index,
+                kg_json_dir=kg_json_dir,
+                json_suffix=f"retry_{retry_index:04d}",
             )
         except RETRYABLE_KG_EXCEPTIONS as error:
             record_failed_inchikey(
@@ -274,10 +343,17 @@ def build_sqlite(
     timeout: int = 300,
     recreate: bool = True,
     resume: bool = False,
+    kg_json_dir: str | Path | None = None,
+    save_kg_json: bool = True,
 ) -> None:
     """Build KG SQLite database from MassBank InChIKeys and KG endpoints."""
     massbank_db = MassBankDatabase(massbank_db_path)
     kg_db = KgDatabase(kg_db_path)
+    resolved_kg_json_dir = (
+        Path(kg_json_dir)
+        if kg_json_dir is not None
+        else kg_db.db_path.parent / "kg_lookup_batches"
+    ) if save_kg_json else None
 
     if resume:
         recreate = False
@@ -355,12 +431,13 @@ def build_sqlite(
     summary_by_inchikey = summary.set_index("inchikey", drop=False)
 
     progress = tqdm(
-        batches,
+        enumerate(batches, start=1),
+        total=len(batches),
         desc="Querying KG batches",
         unit="batch",
     )
 
-    for batch in progress:
+    for batch_index, batch in progress:
         progress.set_postfix(inchikeys=len(batch))
         import_batch_with_timeout_fallback(
             service=service,
@@ -369,9 +446,13 @@ def build_sqlite(
             batch=batch,
             sparql_limit=sparql_limit,
             queried_at=queried_at,
+            batch_index=batch_index,
+            kg_json_dir=resolved_kg_json_dir,
         )
 
     print(f"Wrote KG SQLite database to: {kg_db.db_path}", flush=True)
+    if resolved_kg_json_dir is not None:
+        print(f"Wrote KG batch JSON files to: {resolved_kg_json_dir}", flush=True)
 
 
 def main() -> None:
@@ -386,6 +467,8 @@ def main() -> None:
         timeout=args.timeout,
         recreate=not args.no_recreate and not args.resume,
         resume=args.resume,
+        kg_json_dir=args.kg_json_dir,
+        save_kg_json=not args.no_save_kg_json,
     )
 
 

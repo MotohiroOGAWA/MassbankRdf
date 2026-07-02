@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, TypeVar
 
 import pandas as pd
 from sqlalchemy import delete, func, select, update
@@ -14,17 +14,40 @@ from massbank_rdf.services.kg.common import extract_inchikey_value
 
 from .tables.basetb import Base
 from .tables.kg_metadata import (
-    HmdbMetadata,
+    HmdbBiospecimen,
+    HmdbDisease,
+    HmdbMetabolite,
+    HmdbMetaboliteBiospecimen,
+    HmdbMetaboliteDisease,
+    HmdbMetaboliteInchikey,
+    HmdbMetabolitePathway,
+    HmdbPathway,
     KgInchikey,
     KgLookupFailure,
-    KnapsackActivityMetadata,
-    PubChemCompoundMetadata,
-    PubChemPathwayMetadata,
+    KnapsackActivity,
+    KnapsackActivityCategory,
+    KnapsackActivityFunction,
+    KnapsackRecord,
+    KnapsackRecordActivity,
+    KnapsackRecordActivityCategory,
+    KnapsackRecordActivityFunction,
+    KnapsackRecordInchikey,
+    KnapsackRecordLink,
+    KnapsackRecordTargetSpecies,
+    KnapsackTargetSpecies,
+    PubChemCompound,
+    PubChemCompoundDescriptor,
+    PubChemCompoundInchikey,
+    PubChemCompoundPathway,
+    PubChemDescriptorType,
+    PubChemPathway,
 )
+
+ModelT = TypeVar("ModelT")
 
 
 class KgDatabase:
-    """Database access class for KG metadata SQLite database.
+    """Database access class for the normalized KG metadata SQLite database.
 
     The KG database is independent from MassBankDatabase. It links back to
     MassBank records by the normalized InChIKey string stored in kg_inchikeys.
@@ -105,11 +128,11 @@ class KgDatabase:
         queried_at: datetime | None = None,
         replace_for_inchikeys: Iterable[str] | None = None,
     ) -> None:
-        """Import KG lookup DataFrames using KgLookupService source names.
+        """Import KG lookup DataFrames into normalized source tables.
 
         Expected data keys are pubchem_compound, pubchem_pathway, hmdb, and
-        knapsack_activity. The columns intentionally mirror the query builders
-        under massbank_rdf.services.kg.query_builders.
+        knapsack_activity. Multi-value fields returned as pipe-separated strings
+        are split into one row per entity or relationship.
         """
         source_frames = {
             source: frame.copy()
@@ -172,11 +195,32 @@ class KgDatabase:
     def table_to_dataframe(self, table_name: str) -> pd.DataFrame:
         table_by_name = {
             "kg_inchikeys": KgInchikey,
-            "pubchem_compound_metadata": PubChemCompoundMetadata,
-            "pubchem_pathway_metadata": PubChemPathwayMetadata,
-            "hmdb_metadata": HmdbMetadata,
-            "knapsack_activity_metadata": KnapsackActivityMetadata,
             "kg_lookup_failures": KgLookupFailure,
+            "pubchem_compounds": PubChemCompound,
+            "pubchem_compound_inchikeys": PubChemCompoundInchikey,
+            "pubchem_descriptor_types": PubChemDescriptorType,
+            "pubchem_compound_descriptors": PubChemCompoundDescriptor,
+            "pubchem_pathways": PubChemPathway,
+            "pubchem_compound_pathways": PubChemCompoundPathway,
+            "hmdb_metabolites": HmdbMetabolite,
+            "hmdb_metabolite_inchikeys": HmdbMetaboliteInchikey,
+            "hmdb_pathways": HmdbPathway,
+            "hmdb_metabolite_pathways": HmdbMetabolitePathway,
+            "hmdb_diseases": HmdbDisease,
+            "hmdb_metabolite_diseases": HmdbMetaboliteDisease,
+            "hmdb_biospecimens": HmdbBiospecimen,
+            "hmdb_metabolite_biospecimens": HmdbMetaboliteBiospecimen,
+            "knapsack_records": KnapsackRecord,
+            "knapsack_record_inchikeys": KnapsackRecordInchikey,
+            "knapsack_activities": KnapsackActivity,
+            "knapsack_record_activities": KnapsackRecordActivity,
+            "knapsack_activity_categories": KnapsackActivityCategory,
+            "knapsack_record_activity_categories": KnapsackRecordActivityCategory,
+            "knapsack_activity_functions": KnapsackActivityFunction,
+            "knapsack_record_activity_functions": KnapsackRecordActivityFunction,
+            "knapsack_target_species": KnapsackTargetSpecies,
+            "knapsack_record_target_species": KnapsackRecordTargetSpecies,
+            "knapsack_record_links": KnapsackRecordLink,
         }
         table = table_by_name[table_name]
         stmt = select(table)
@@ -272,12 +316,11 @@ class KgDatabase:
             return self._get_inchikey_id_map(session, normalized)
 
     def get_max_metadata_kg_inchikey_id(self) -> int:
-        """Return the furthest kg_inchikey_id present in KG metadata tables."""
+        """Return the furthest kg_inchikey_id present in source link tables."""
         tables = [
-            PubChemCompoundMetadata,
-            PubChemPathwayMetadata,
-            HmdbMetadata,
-            KnapsackActivityMetadata,
+            PubChemCompoundInchikey,
+            HmdbMetaboliteInchikey,
+            KnapsackRecordInchikey,
         ]
 
         max_ids: list[int] = []
@@ -389,10 +432,9 @@ class KgDatabase:
             return
 
         for table in [
-            PubChemCompoundMetadata,
-            PubChemPathwayMetadata,
-            HmdbMetadata,
-            KnapsackActivityMetadata,
+            PubChemCompoundInchikey,
+            HmdbMetaboliteInchikey,
+            KnapsackRecordInchikey,
         ]:
             session.execute(delete(table).where(table.kg_inchikey_id.in_(ids)))
 
@@ -415,35 +457,42 @@ class KgDatabase:
         inchikey_id_by_value: dict[str, int],
     ) -> None:
         df = self._prepare_frame(df, ["value_inchikey", "pubchem_compound", "descriptorType", "descriptor_value"])
-        rows = []
-        seen_keys: set[tuple[object, ...]] = set()
         for _, row in df.iterrows():
             inchikey = extract_inchikey_value(row.get("value_inchikey"))
-            if inchikey not in inchikey_id_by_value:
+            kg_inchikey_id = inchikey_id_by_value.get(inchikey) if inchikey is not None else None
+            compound_uri = self._optional_str(row.get("pubchem_compound"))
+            if kg_inchikey_id is None or compound_uri is None:
                 continue
 
-            kg_inchikey_id = inchikey_id_by_value[inchikey]
-            pubchem_compound = self._optional_str(row.get("pubchem_compound"))
-            descriptor_type = self._optional_str(row.get("descriptorType"))
-            descriptor_value = self._optional_str(row.get("descriptor_value"))
-            key = (
-                kg_inchikey_id,
-                pubchem_compound,
-                descriptor_type,
-                descriptor_value,
+            compound = self._get_or_create(session, PubChemCompound, {"uri": compound_uri})
+            self._get_or_create(
+                session,
+                PubChemCompoundInchikey,
+                {
+                    "kg_inchikey_id": kg_inchikey_id,
+                    "pubchem_compound_id": compound.id,
+                },
             )
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
 
-            rows.append(PubChemCompoundMetadata(
-                kg_inchikey_id=kg_inchikey_id,
-                value_inchikey=inchikey,
-                pubchem_compound=pubchem_compound,
-                descriptor_type=descriptor_type,
-                descriptor_value=descriptor_value,
-            ))
-        session.add_all(rows)
+            descriptor_type_uri = self._optional_str(row.get("descriptorType"))
+            descriptor_value = self._optional_str(row.get("descriptor_value"))
+            if descriptor_type_uri is None or descriptor_value is None:
+                continue
+
+            descriptor_type = self._get_or_create(
+                session,
+                PubChemDescriptorType,
+                {"uri": descriptor_type_uri},
+            )
+            self._get_or_create(
+                session,
+                PubChemCompoundDescriptor,
+                {
+                    "pubchem_compound_id": compound.id,
+                    "descriptor_type_id": descriptor_type.id,
+                    "descriptor_value": descriptor_value,
+                },
+            )
 
     def _insert_pubchem_pathway_rows(
         self,
@@ -452,38 +501,44 @@ class KgDatabase:
         inchikey_id_by_value: dict[str, int],
     ) -> None:
         df = self._prepare_frame(df, ["value_inchikey", "pubchem_compound", "pathway", "pathway_label", "pathway_organism"])
-        rows = []
-        seen_keys: set[tuple[object, ...]] = set()
         for _, row in df.iterrows():
             inchikey = extract_inchikey_value(row.get("value_inchikey"))
-            if inchikey not in inchikey_id_by_value:
+            kg_inchikey_id = inchikey_id_by_value.get(inchikey) if inchikey is not None else None
+            compound_uri = self._optional_str(row.get("pubchem_compound"))
+            pathway_uri = self._optional_str(row.get("pathway"))
+            if kg_inchikey_id is None or compound_uri is None:
                 continue
 
-            kg_inchikey_id = inchikey_id_by_value[inchikey]
-            pubchem_compound = self._optional_str(row.get("pubchem_compound"))
-            pathway = self._optional_str(row.get("pathway"))
-            pathway_label = self._optional_str(row.get("pathway_label"))
-            pathway_organism = self._optional_str(row.get("pathway_organism"))
-            key = (
-                kg_inchikey_id,
-                pubchem_compound,
-                pathway,
-                pathway_label,
-                pathway_organism,
+            compound = self._get_or_create(session, PubChemCompound, {"uri": compound_uri})
+            self._get_or_create(
+                session,
+                PubChemCompoundInchikey,
+                {
+                    "kg_inchikey_id": kg_inchikey_id,
+                    "pubchem_compound_id": compound.id,
+                },
             )
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
 
-            rows.append(PubChemPathwayMetadata(
-                kg_inchikey_id=kg_inchikey_id,
-                value_inchikey=inchikey,
-                pubchem_compound=pubchem_compound,
-                pathway=pathway,
-                pathway_label=pathway_label,
-                pathway_organism=pathway_organism,
-            ))
-        session.add_all(rows)
+            if pathway_uri is None:
+                continue
+
+            pathway = self._get_or_create(
+                session,
+                PubChemPathway,
+                {"uri": pathway_uri},
+                defaults={
+                    "label": self._optional_str(row.get("pathway_label")),
+                    "organism_uri": self._optional_str(row.get("pathway_organism")),
+                },
+            )
+            self._get_or_create(
+                session,
+                PubChemCompoundPathway,
+                {
+                    "pubchem_compound_id": compound.id,
+                    "pubchem_pathway_id": pathway.id,
+                },
+            )
 
     def _insert_hmdb_rows(
         self,
@@ -498,47 +553,84 @@ class KgDatabase:
             "hmdb_disease_label", "hmdb_biospecimen",
         ]
         df = self._prepare_frame(df, columns)
-        rows = []
-        seen_keys: set[tuple[object, ...]] = set()
         for _, row in df.iterrows():
             inchikey = extract_inchikey_value(row.get("value_inchikey"))
-            if inchikey not in inchikey_id_by_value:
+            kg_inchikey_id = inchikey_id_by_value.get(inchikey) if inchikey is not None else None
+            metabolite_uri = self._optional_str(row.get("hmdb_metabolite"))
+            if kg_inchikey_id is None or metabolite_uri is None:
                 continue
 
-            kg_inchikey_id = inchikey_id_by_value[inchikey]
-            hmdb_metabolite = self._optional_str(row.get("hmdb_metabolite"))
-            hmdb_pathway = self._optional_str(row.get("hmdb_pathway"))
-            hmdb_disease = self._optional_str(row.get("hmdb_disease"))
-            hmdb_biospecimen = self._optional_str(row.get("hmdb_biospecimen"))
-            key = (
-                kg_inchikey_id,
-                hmdb_metabolite,
-                hmdb_pathway,
-                hmdb_disease,
-                hmdb_biospecimen,
+            metabolite = self._get_or_create(
+                session,
+                HmdbMetabolite,
+                {"uri": metabolite_uri},
+                defaults={
+                    "accession": self._optional_str(row.get("hmdb_accession")),
+                    "label": self._optional_str(row.get("hmdb_label")),
+                    "formula": self._optional_str(row.get("hmdb_formula")),
+                    "average_molecular_weight": self._optional_str(row.get("hmdb_avg_mw")),
+                    "monoisotopic_molecular_weight": self._optional_str(row.get("hmdb_mono_mw")),
+                    "smiles": self._optional_str(row.get("hmdb_smiles")),
+                    "inchi": self._optional_str(row.get("hmdb_inchi")),
+                },
             )
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
+            self._get_or_create(
+                session,
+                HmdbMetaboliteInchikey,
+                {
+                    "kg_inchikey_id": kg_inchikey_id,
+                    "hmdb_metabolite_id": metabolite.id,
+                },
+            )
 
-            rows.append(HmdbMetadata(
-                kg_inchikey_id=kg_inchikey_id,
-                value_inchikey=inchikey,
-                hmdb_metabolite=hmdb_metabolite,
-                hmdb_accession=self._optional_str(row.get("hmdb_accession")),
-                hmdb_label=self._optional_str(row.get("hmdb_label")),
-                hmdb_formula=self._optional_str(row.get("hmdb_formula")),
-                hmdb_avg_mw=self._optional_str(row.get("hmdb_avg_mw")),
-                hmdb_mono_mw=self._optional_str(row.get("hmdb_mono_mw")),
-                hmdb_smiles=self._optional_str(row.get("hmdb_smiles")),
-                hmdb_inchi=self._optional_str(row.get("hmdb_inchi")),
-                hmdb_pathway=hmdb_pathway,
-                hmdb_pathway_label=self._optional_str(row.get("hmdb_pathway_label")),
-                hmdb_disease=hmdb_disease,
-                hmdb_disease_label=self._optional_str(row.get("hmdb_disease_label")),
-                hmdb_biospecimen=hmdb_biospecimen,
-            ))
-        session.add_all(rows)
+            pathway_labels = self._split_value(row.get("hmdb_pathway_label"))
+            for index, pathway_uri in enumerate(self._split_value(row.get("hmdb_pathway"))):
+                pathway = self._get_or_create(
+                    session,
+                    HmdbPathway,
+                    {"uri": pathway_uri},
+                    defaults={"label": self._value_at(pathway_labels, index)},
+                )
+                self._get_or_create(
+                    session,
+                    HmdbMetabolitePathway,
+                    {
+                        "hmdb_metabolite_id": metabolite.id,
+                        "hmdb_pathway_id": pathway.id,
+                    },
+                )
+
+            disease_labels = self._split_value(row.get("hmdb_disease_label"))
+            for index, disease_uri in enumerate(self._split_value(row.get("hmdb_disease"))):
+                disease = self._get_or_create(
+                    session,
+                    HmdbDisease,
+                    {"uri": disease_uri},
+                    defaults={"label": self._value_at(disease_labels, index)},
+                )
+                self._get_or_create(
+                    session,
+                    HmdbMetaboliteDisease,
+                    {
+                        "hmdb_metabolite_id": metabolite.id,
+                        "hmdb_disease_id": disease.id,
+                    },
+                )
+
+            for biospecimen_name in self._split_value(row.get("hmdb_biospecimen")):
+                biospecimen = self._get_or_create(
+                    session,
+                    HmdbBiospecimen,
+                    {"name": biospecimen_name},
+                )
+                self._get_or_create(
+                    session,
+                    HmdbMetaboliteBiospecimen,
+                    {
+                        "hmdb_metabolite_id": metabolite.id,
+                        "hmdb_biospecimen_id": biospecimen.id,
+                    },
+                )
 
     def _insert_knapsack_activity_rows(
         self,
@@ -553,50 +645,149 @@ class KgDatabase:
             "activity", "activity_label", "rdfs_seealso", "foaf_homepage",
         ]
         df = self._prepare_frame(df, columns)
-        rows = []
-        seen_keys: set[tuple[object, ...]] = set()
         for _, row in df.iterrows():
             inchikey = extract_inchikey_value(row.get("value_inchikey"))
-            if inchikey not in inchikey_id_by_value:
-                continue
-
-            kg_inchikey_id = inchikey_id_by_value[inchikey]
+            kg_inchikey_id = inchikey_id_by_value.get(inchikey) if inchikey is not None else None
             knapsack_id = self._optional_str(row.get("knapsack_id"))
-            activity = self._optional_str(row.get("activity"))
-            activity_label = self._optional_str(row.get("activity_label"))
-            activity_category = self._optional_str(row.get("activity_category"))
-            activity_function = self._optional_str(row.get("activity_function"))
-            activity_target_species = self._optional_str(row.get("activity_target_species"))
-            key = (
-                kg_inchikey_id,
-                knapsack_id,
-                activity,
-                activity_label,
-                activity_category,
-                activity_function,
-                activity_target_species,
-            )
-            if key in seen_keys:
+            if kg_inchikey_id is None or knapsack_id is None:
                 continue
-            seen_keys.add(key)
 
-            rows.append(KnapsackActivityMetadata(
-                kg_inchikey_id=kg_inchikey_id,
-                value_inchikey=inchikey,
-                knapsack_id=knapsack_id,
-                molecular_entity_name=self._optional_str(row.get("molecular_entity_name")),
-                molecular_formula=self._optional_str(row.get("molecular_formula")),
-                value_mw=self._optional_str(row.get("value_mw")),
-                activity_record_label=self._optional_str(row.get("activity_record_label")),
-                activity_category=activity_category,
-                activity_function=activity_function,
-                activity_target_species=activity_target_species,
-                activity=activity,
-                activity_label=activity_label,
-                rdfs_seealso=self._optional_str(row.get("rdfs_seealso")),
-                foaf_homepage=self._optional_str(row.get("foaf_homepage")),
-            ))
-        session.add_all(rows)
+            record = self._get_or_create(
+                session,
+                KnapsackRecord,
+                {"knapsack_id": knapsack_id},
+                defaults={
+                    "molecular_entity_name": self._optional_str(row.get("molecular_entity_name")),
+                    "molecular_formula": self._optional_str(row.get("molecular_formula")),
+                    "molecular_weight": self._optional_str(row.get("value_mw")),
+                    "activity_record_label": self._optional_str(row.get("activity_record_label")),
+                },
+            )
+            self._get_or_create(
+                session,
+                KnapsackRecordInchikey,
+                {
+                    "kg_inchikey_id": kg_inchikey_id,
+                    "knapsack_record_id": record.id,
+                },
+            )
+
+            activity_uri = self._optional_str(row.get("activity"))
+            if activity_uri is not None:
+                activity = self._get_or_create(
+                    session,
+                    KnapsackActivity,
+                    {"uri": activity_uri},
+                    defaults={"label": self._optional_str(row.get("activity_label"))},
+                )
+                self._get_or_create(
+                    session,
+                    KnapsackRecordActivity,
+                    {
+                        "knapsack_record_id": record.id,
+                        "knapsack_activity_id": activity.id,
+                    },
+                )
+
+            for category_name in self._split_value(row.get("activity_category")):
+                category = self._get_or_create(
+                    session,
+                    KnapsackActivityCategory,
+                    {"name": category_name},
+                )
+                self._get_or_create(
+                    session,
+                    KnapsackRecordActivityCategory,
+                    {
+                        "knapsack_record_id": record.id,
+                        "category_id": category.id,
+                    },
+                )
+
+            for function_name in self._split_value(row.get("activity_function")):
+                function = self._get_or_create(
+                    session,
+                    KnapsackActivityFunction,
+                    {"name": function_name},
+                )
+                self._get_or_create(
+                    session,
+                    KnapsackRecordActivityFunction,
+                    {
+                        "knapsack_record_id": record.id,
+                        "function_id": function.id,
+                    },
+                )
+
+            for species_name in self._split_value(row.get("activity_target_species")):
+                species = self._get_or_create(
+                    session,
+                    KnapsackTargetSpecies,
+                    {"name": species_name},
+                )
+                self._get_or_create(
+                    session,
+                    KnapsackRecordTargetSpecies,
+                    {
+                        "knapsack_record_id": record.id,
+                        "target_species_id": species.id,
+                    },
+                )
+
+            for url in self._split_value(row.get("rdfs_seealso")):
+                self._get_or_create(
+                    session,
+                    KnapsackRecordLink,
+                    {
+                        "knapsack_record_id": record.id,
+                        "link_type": "rdfs:seeAlso",
+                        "url": url,
+                    },
+                )
+
+            for url in self._split_value(row.get("foaf_homepage")):
+                self._get_or_create(
+                    session,
+                    KnapsackRecordLink,
+                    {
+                        "knapsack_record_id": record.id,
+                        "link_type": "foaf:homepage",
+                        "url": url,
+                    },
+                )
+
+    def _get_or_create(
+        self,
+        session: Session,
+        model: type[ModelT],
+        lookup: dict[str, object],
+        *,
+        defaults: dict[str, object] | None = None,
+    ) -> ModelT:
+        conditions = []
+        for field_name, value in lookup.items():
+            column = getattr(model, field_name)
+            conditions.append(column.is_(None) if value is None else column == value)
+
+        instance = session.scalar(select(model).where(*conditions))
+        values = {**lookup, **(defaults or {})}
+        if instance is None:
+            instance = model(**values)
+            session.add(instance)
+            session.flush()
+            return instance
+
+        self._fill_missing_values(instance, defaults or {})
+        return instance
+
+    @staticmethod
+    def _fill_missing_values(instance: object, values: dict[str, object]) -> None:
+        for field_name, value in values.items():
+            if value is None:
+                continue
+            current_value = getattr(instance, field_name)
+            if current_value is None or current_value == "":
+                setattr(instance, field_name, value)
 
     @staticmethod
     def _prepare_frame(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
@@ -605,6 +796,19 @@ class KgDatabase:
             if column not in df.columns:
                 df[column] = None
         return df[columns].drop_duplicates()
+
+    @staticmethod
+    def _split_value(value: object) -> list[str]:
+        text = KgDatabase._optional_str(value)
+        if text is None:
+            return []
+        return [part.strip() for part in text.split("|") if part.strip()]
+
+    @staticmethod
+    def _value_at(values: list[str], index: int) -> str | None:
+        if index < len(values):
+            return values[index]
+        return None
 
     @staticmethod
     def _optional_str(value: object) -> str | None:
