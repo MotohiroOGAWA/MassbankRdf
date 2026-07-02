@@ -1,0 +1,578 @@
+{
+  "metadata": {
+    "source": "massbank_rdf",
+    "feature_count": 3,
+    "sources": {
+      "pc": "PubChem",
+      "hmdb": "HMDB",
+      "ks": "KNApSAcK"
+    },
+    "prefixes": {
+      "pc_c": "http://rdf.ncbi.nlm.nih.gov/pubchem/compound/",
+      "pc_p": "http://rdf.ncbi.nlm.nih.gov/pubchem/pathway/",
+      "pc_tax": "http://rdf.ncbi.nlm.nih.gov/pubchem/taxonomy/",
+      "cheminf": "http://semanticscience.org/resource/",
+      "hmdb_res": "https://hmdb.ca/resource/",
+      "hmdb_met": "https://hmdb.ca/metabolites/",
+      "ks_act": "http://purl.jp/knapsack/activity#"
+    },
+    "note": "KG evidence generated from KG lookup results. URI prefixes and source labels are stored in metadata; entities are grouped by source to reduce repeated text."
+  },
+  "features": [
+    {
+      "inchikey": "LPHGQDQBBGAPDZ-UHFFFAOYSA-N",
+      "summary": {
+        "compounds": 1,
+        "diseases": 0,
+        "pathways": 0,
+        "biospecimens": 0,
+        "organisms": 0,
+        "activities": {
+          "rows_original": 0,
+          "rows_grouped": 0
+        }
+      },
+      "entities": {
+        "compounds": {
+          "pc": [
+            {
+              "id": "CID1326",
+              "descriptors": {
+                "CHEMINF_000376": [
+                  "CN1C=NC2=C1N(C(=O)N(C2=O)C)C"
+                ],
+                "CHEMINF_000335": [
+                  "C8H10N4O2"
+                ],
+                "CHEMINF_000334": [
+                  "194.19"
+                ]
+              }
+            }
+          ],
+          "hmdb": [],
+          "ks": []
+        },
+        "diseases": {
+          "hmdb": []
+        },
+        "pathways": {
+          "pc": [],
+          "hmdb": []
+        },
+        "biospecimens": {
+          "hmdb": []
+        },
+        "organisms": {
+          "pc": []
+        },
+        "activities": {
+          "ks": []
+        }
+      }
+    },
+    {
+      "inchikey": "RYYVLZVUVIJVGH-UHFFFAOYSA-N",
+      "summary": {
+        "compounds": 3,
+        "diseases": 5,
+        "pathways": 25,
+        "biospecimens": 5,
+        "organisms": 2,
+        "activities": {
+          "rows_original": 10,
+          "rows_grouped": 10
+        }
+      },
+      "entities": {
+        "compounds": {
+          "pc": [
+            {
+              "id": "CID2519",
+              "descriptors": {
+                "CHEMINF_000376": [
+                  "CN1C=NC2=C1C(=O)N(C(=O)N2C)C"
+                ],
+                "CHEMINF_000335": [
+                  "C8H10N4O2"
+                ],
+                "CHEMINF_000334": [
+                  "194.19"
+                ]
+              }
+            }
+          ],
+          "hmdb": [
+            {
+              "id": "metabolite-HMDB0001847",
+              "accession": "HMDB0001847",
+              "label": "Caffeine",
+              "formula": "C8H10N4O2",
+              "average_mw": "194.1906",
+              "monoisotopic_mw": "194.080375584",
+              "smiles": "CN1C=NC2=C1C(=O)N(C)C(=O)N2C",
+              "inchi": "InChI=1S/C8H10N4O2/c1-10-4-9-6-5(10)7(13)12(3)8(14)11(6)2/h4H,1-3H3"
+            }
+          ],
+          "ks": [
+            {
+              "id": "C00001492",
+              "name": "Caffeine"
+            }
+          ]
+        },
+        "diseases": {
+          "hmdb": [
+            {
+              "id": "disease-eosinophilic-esophagitis",
+              "label": "Eosinophilic esophagitis"
+            },
+            {
+              "id": "disease-colorectal-cancer",
+              "label": "Colorectal cancer"
+            },
+            {
+              "id": "disease-head-injury",
+              "label": "Head injury"
+            },
+            {
+              "id": "disease-metastatic-melanoma",
+              "label": "Metastatic melanoma"
+            },
+            {
+              "id": "disease-asthma",
+              "label": "Asthma"
+            }
+          ]
+        },
+        "pathways": {
+          "pc": [
+            {
+              "id": "PWID24249",
+              "label": "caffeine biosynthesis I",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID1360974",
+              "label": "Purinergic signaling",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID24252",
+              "label": "caffeine biosynthesis II (via paraxanthine)",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID25520",
+              "label": "caffeine degradation V (bacteria, via trimethylurate)",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID25525",
+              "label": "caffeine degradation IV (bacteria, via demethylation and oxidation)",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID25530",
+              "label": "caffeine degradation II",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID25533",
+              "label": "caffeine degradation I (main, plants)",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID25536",
+              "label": "caffeine degradation III (bacteria, via demethylation)",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID25598",
+              "label": "glycogen degradation II",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID11119",
+              "label": "Phase I - Functionalization of compounds",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID11120",
+              "label": "Cytochrome P450 - arranged by substrate type",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID11123",
+              "label": "Xenobiotics",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID11124",
+              "label": "Aromatic amines can be N-hydroxylated or N-dealkylated by CYP1A2",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID10844",
+              "label": "Metabolism",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID11118",
+              "label": "Biological oxidations",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID1184460",
+              "label": "Theophylline Pathway, Pharmacokinetics",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID1184454",
+              "label": "Caffeine Pathway, Pharmacokinetics",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID1184538",
+              "label": "Caffeine Metabolism",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID1281818",
+              "label": "caffeine biosynthesis II (via paraxanthine)",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID1282315",
+              "label": "caffeine degradation I (main, plants)",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID1282370",
+              "label": "caffeine biosynthesis I",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID1282562",
+              "label": "caffeine degradation II",
+              "organism": "TAXID",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID39846",
+              "label": "Caffeine and theobromine metabolism",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            },
+            {
+              "id": "PWID39971",
+              "label": "Phosphodiesterases in neuronal function",
+              "organism": "TAXID9606",
+              "compound": "CID2519"
+            }
+          ],
+          "hmdb": [
+            {
+              "id": "pathway-smpdb-SMP00028",
+              "label": "Caffeine Metabolism"
+            }
+          ]
+        },
+        "biospecimens": {
+          "hmdb": [
+            {
+              "id": "Blood"
+            },
+            {
+              "id": "Cerebrospinal Fluid (CSF)"
+            },
+            {
+              "id": "Feces"
+            },
+            {
+              "id": "Saliva"
+            },
+            {
+              "id": "Urine"
+            }
+          ]
+        },
+        "organisms": {
+          "pc": [
+            {
+              "id": "TAXID"
+            },
+            {
+              "id": "TAXID9606"
+            }
+          ]
+        },
+        "activities": {
+          "ks": [
+            {
+              "label": "Antineoplastic, lung cancer, essential or caused by urethan",
+              "category": [
+                "Anticancer",
+                "Analgesic",
+                "Antiasthmatic",
+                "Other cardiovascular agent",
+                "Antineoplastic",
+                "Antiviral",
+                "CNS stimulant",
+                "Diuretic"
+              ],
+              "target_species": "|mus",
+              "uri": [
+                "3f280a556ff277bc85ad748838aaa17d"
+              ]
+            },
+            {
+              "label": "Antineoplastic, pulmonary adenoma caused by nitroso compound",
+              "category": [
+                "Anticancer",
+                "Analgesic",
+                "Antiasthmatic",
+                "Other cardiovascular agent",
+                "Antineoplastic",
+                "Antiviral",
+                "CNS stimulant",
+                "Diuretic"
+              ],
+              "target_species": "|mus",
+              "uri": [
+                "e325cfd4ec46342879413f08f8e7f8c4"
+              ]
+            },
+            {
+              "label": "Antiviral, no explanation of virus species",
+              "category": [
+                "Anticancer",
+                "Analgesic",
+                "Antiasthmatic",
+                "Other cardiovascular agent",
+                "Antineoplastic",
+                "Antiviral",
+                "CNS stimulant",
+                "Diuretic"
+              ],
+              "target_species": "|mus",
+              "uri": [
+                "b08387926397ddd743ee5f133b83332d"
+              ]
+            },
+            {
+              "label": "cardiac stimulant",
+              "category": [
+                "Anticancer",
+                "Analgesic",
+                "Antiasthmatic",
+                "Other cardiovascular agent",
+                "Antineoplastic",
+                "Antiviral",
+                "CNS stimulant",
+                "Diuretic"
+              ],
+              "target_species": "|mus",
+              "uri": [
+                "42bb7e2b27d6742be87e31c8e04f100a"
+              ]
+            },
+            {
+              "label": "causing wakefulness",
+              "category": [
+                "Anticancer",
+                "Analgesic",
+                "Antiasthmatic",
+                "Other cardiovascular agent",
+                "Antineoplastic",
+                "Antiviral",
+                "CNS stimulant",
+                "Diuretic"
+              ],
+              "target_species": "|mus",
+              "uri": [
+                "df3746d111f0c20f3db0e79a88e7e1b7"
+              ]
+            },
+            {
+              "label": "central nervous system stimulant",
+              "category": [
+                "Anticancer",
+                "Analgesic",
+                "Antiasthmatic",
+                "Other cardiovascular agent",
+                "Antineoplastic",
+                "Antiviral",
+                "CNS stimulant",
+                "Diuretic"
+              ],
+              "target_species": "|mus",
+              "uri": [
+                "de73bc727d80cf429a6dad687b9ff9dd"
+              ]
+            },
+            {
+              "label": "diuretic stimulant",
+              "category": [
+                "Anticancer",
+                "Analgesic",
+                "Antiasthmatic",
+                "Other cardiovascular agent",
+                "Antineoplastic",
+                "Antiviral",
+                "CNS stimulant",
+                "Diuretic"
+              ],
+              "target_species": "|mus",
+              "uri": [
+                "67f08e0d3abd57a9444d51414be195ee"
+              ]
+            },
+            {
+              "label": "increased mental activity",
+              "category": [
+                "Anticancer",
+                "Analgesic",
+                "Antiasthmatic",
+                "Other cardiovascular agent",
+                "Antineoplastic",
+                "Antiviral",
+                "CNS stimulant",
+                "Diuretic"
+              ],
+              "target_species": "|mus",
+              "uri": [
+                "bb1fa0a32f835aa80263906371b84f9e"
+              ]
+            },
+            {
+              "label": "respiratory stimulant",
+              "category": [
+                "Anticancer",
+                "Analgesic",
+                "Antiasthmatic",
+                "Other cardiovascular agent",
+                "Antineoplastic",
+                "Antiviral",
+                "CNS stimulant",
+                "Diuretic"
+              ],
+              "target_species": "|mus",
+              "uri": [
+                "782e4f1800071138200773241af67ad0"
+              ]
+            },
+            {
+              "label": "used in many proprietary preparations containing aspirin and paracetamol to enhance analgesic activity",
+              "category": [
+                "Anticancer",
+                "Analgesic",
+                "Antiasthmatic",
+                "Other cardiovascular agent",
+                "Antineoplastic",
+                "Antiviral",
+                "CNS stimulant",
+                "Diuretic"
+              ],
+              "target_species": "|mus",
+              "uri": [
+                "e4dc9216213d3da9e061101bc7b330e2"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "inchikey": "BYPFEZZEUUWMEJ-UHFFFAOYSA-N",
+      "summary": {
+        "compounds": 2,
+        "diseases": 0,
+        "pathways": 0,
+        "biospecimens": 2,
+        "organisms": 0,
+        "activities": {
+          "rows_original": 0,
+          "rows_grouped": 0
+        }
+      },
+      "entities": {
+        "compounds": {
+          "pc": [
+            {
+              "id": "CID4740",
+              "descriptors": {
+                "CHEMINF_000376": [
+                  "CC(=O)CCCCN1C(=O)C2=C(N=CN2C)N(C1=O)C"
+                ],
+                "CHEMINF_000335": [
+                  "C13H18N4O3"
+                ],
+                "CHEMINF_000334": [
+                  "278.31"
+                ]
+              }
+            }
+          ],
+          "hmdb": [
+            {
+              "id": "metabolite-HMDB0014944",
+              "accession": "HMDB0014944",
+              "label": "Pentoxifylline",
+              "formula": "C13H18N4O3",
+              "average_mw": "278.307",
+              "monoisotopic_mw": "278.137890462",
+              "smiles": "CN1C=NC2=C1C(=O)N(CCCCC(C)=O)C(=O)N2C",
+              "inchi": "InChI=1S/C13H18N4O3/c1-9(18)6-4-5-7-17-12(19)10-11(14-8-15(10)2)16(3)13(17)20/h8H,4-7H2,1-3H3"
+            }
+          ],
+          "ks": []
+        },
+        "diseases": {
+          "hmdb": []
+        },
+        "pathways": {
+          "pc": [],
+          "hmdb": []
+        },
+        "biospecimens": {
+          "hmdb": [
+            {
+              "id": "Blood"
+            },
+            {
+              "id": "Urine"
+            }
+          ]
+        },
+        "organisms": {
+          "pc": []
+        },
+        "activities": {
+          "ks": []
+        }
+      }
+    }
+  ]
+}

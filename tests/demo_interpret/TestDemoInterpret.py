@@ -184,6 +184,44 @@ class MainInjectionTests(unittest.TestCase):
         )
         self.assertIn("LLM INTERPRETATION", buffer.getvalue())
 
+    def test_main_interprets_shipped_demo_evidence_offline(self) -> None:
+        import types
+
+        received: dict = {}
+
+        class _FakeInterpreter:
+            def interpret_kg_evidence(self, evidence):
+                received["evidence"] = evidence
+                return MainInjectionTests()._fake_result()
+
+        def _build_interpreter():
+            config = types.SimpleNamespace(deployment="fake-deployment")
+            return _FakeInterpreter(), config
+
+        evidence_path = (
+            demo_interpret.DEFAULT_OUTPUT_ROOT
+            / "MSBNK-LCSB-LU119906"
+            / demo_interpret.EVIDENCE_FILENAME
+        )
+        self.assertTrue(
+            evidence_path.is_file(),
+            f"shipped demo evidence missing: {evidence_path}",
+        )
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            code = demo_interpret.main(
+                ["--evidence", str(evidence_path)],
+                build_interpreter=_build_interpreter,
+            )
+
+        self.assertEqual(code, 0)
+        features = received["evidence"].get("features", [])
+        self.assertEqual(len(features), 3)
+        inchikeys = {f.get("inchikey") for f in features}
+        self.assertIn("LPHGQDQBBGAPDZ-UHFFFAOYSA-N", inchikeys)
+        self.assertIn("LLM INTERPRETATION", buffer.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
