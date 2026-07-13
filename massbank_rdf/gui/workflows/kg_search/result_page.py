@@ -42,8 +42,10 @@ def format_search_summary(payload: dict[str, Any]) -> str:
         f"Min matched peaks: {summary.get('min_matched_peaks', '-')}\n"
         f"Ion mode: {summary.get('ion_mode', '-')}\n"
         f"Precursor m/z: {summary.get('precursor_mz', '-')}\n"
-        f"Precursor tolerance: {summary.get('precursor_tolerance', '-')}"
+        f"Precursor tolerance: {summary.get('precursor_tolerance', '-')}\n"
         f"Max MassBank InChIKey for KG: {summary.get('max_massbank_inchikey', '-')}\n"
+        f"KG InChIKey matching: "
+        f"{'short (connectivity)' if summary.get('use_short_inchikey', False) else 'full'}\n"
     )
 
 

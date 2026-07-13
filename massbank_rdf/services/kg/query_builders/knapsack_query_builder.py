@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..common import sparql_values
+from ..common import normalize_short_inchikey_values, sparql_values
 
 
 def sparql_limit_clause(limit: int | None) -> str:
@@ -28,9 +28,19 @@ def build_knapsack_activity_query(
     use_from_graph: bool = True,
     graph_iri: str = "http://example.org/graph/knapsack",
     limit: int | None = 500,
+    use_short_inchikey: bool = False,
 ) -> str:
     from_clause = build_from_clause(use_from_graph, graph_iri)
     limit_clause = sparql_limit_clause(limit)
+    if use_short_inchikey:
+        query_inchikeys = normalize_short_inchikey_values(inchikeys)
+        match_filter = (
+            'FILTER(STRSTARTS(UCASE(STR(?value_inchikey)), '
+            'CONCAT(?query_inchikey, "-")))'
+        )
+    else:
+        query_inchikeys = inchikeys
+        match_filter = "FILTER(UCASE(STR(?value_inchikey)) = ?query_inchikey)"
 
     return f"""
 PREFIX knapsack: <http://purl.jp/knapsack/resource#>
@@ -57,7 +67,7 @@ SELECT
   (GROUP_CONCAT(DISTINCT STR(?foaf_homepage_value); separator="|") AS ?foaf_homepage)
 {from_clause}
 WHERE {{
-  {sparql_values("query_inchikey", inchikeys)}
+  {sparql_values("query_inchikey", query_inchikeys)}
 
   {{
     ?StandardInchikey a cheminf:CHEMINF_000059 ;
@@ -71,7 +81,7 @@ WHERE {{
     }}
   }}
 
-  FILTER(UCASE(STR(?value_inchikey)) = ?query_inchikey)
+  {match_filter}
   FILTER(CONTAINS(STR(?StandardInchikey), "#standard_inchikey"))
 
   BIND(STRBEFORE(STR(?StandardInchikey), "#standard_inchikey") AS ?knapsack_record_uri)

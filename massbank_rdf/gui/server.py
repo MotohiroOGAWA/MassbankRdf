@@ -31,6 +31,13 @@ from .workflows.common_peak_annotation.input_page import create_app as create_co
 from .workflows.common_peak_annotation.result_page import create_app as create_common_peak_result_app
 
 APP_LAYOUT_STYLES = """
+html,
+body {
+    color-scheme: light !important;
+    background: #ffffff !important;
+    color: #1f2933 !important;
+}
+
 footer {
     display: none !important;
 }
@@ -192,6 +199,25 @@ footer {
 }
 """
 
+LIGHT_THEME_QUERY_PARAM = "__theme"
+
+
+def _light_theme_redirect_url(request: Request) -> str | None:
+    """Return a light-theme URL for browser page requests when needed."""
+    accepts_html = "text/html" in request.headers.get("accept", "")
+
+    if request.method != "GET" or not accepts_html:
+        return None
+
+    if request.query_params.get(LIGHT_THEME_QUERY_PARAM) == "light":
+        return None
+
+    return str(
+        request.url.include_query_params(
+            **{LIGHT_THEME_QUERY_PARAM: "light"}
+        )
+    )
+
 
 def _with_app_layout(blocks: gr.Blocks) -> gr.Blocks:
     blocks.css = "\n\n".join(filter(None, [APP_LAYOUT_STYLES, blocks.css]))
@@ -218,6 +244,11 @@ def create_server() -> FastAPI:
         request: Request,
         call_next,
     ) -> Response:
+        light_theme_url = _light_theme_redirect_url(request)
+
+        if light_theme_url is not None:
+            return RedirectResponse(url=light_theme_url)
+
         kg_session_id = request.cookies.get("kg_session_id")
         common_peak_session_id = request.cookies.get("common_peak_session_id")
 

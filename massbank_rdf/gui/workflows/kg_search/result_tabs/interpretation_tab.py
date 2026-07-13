@@ -73,6 +73,9 @@ def _format_status(
                 "",
                 "[Overall summary]",
                 f"Overview: {summary.get('overview', '-')}",
+                f"Origin overview: {summary.get('origin_overview', '-')}",
+                "Likely false positives: "
+                + ", ".join(summary.get("likely_false_positives", [])),
             ]
         )
 

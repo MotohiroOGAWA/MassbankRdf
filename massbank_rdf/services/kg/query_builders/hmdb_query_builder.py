@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from ..common import normalize_inchikey_values
+from ..common import (
+    normalize_inchikey_values,
+    normalize_short_inchikey_values,
+    sparql_values,
+)
 
 
 def sparql_limit_clause(limit: int | None) -> str:
@@ -30,8 +34,21 @@ def sparql_inchikey_uri_values(
 def build_hmdb_query(
     inchikeys: list[str],
     limit: int | None = 100,
+    use_short_inchikey: bool = False,
 ) -> str:
     limit_clause = sparql_limit_clause(limit)
+    if use_short_inchikey:
+        inchikey_values = sparql_values(
+            "query_short_inchikey",
+            normalize_short_inchikey_values(inchikeys),
+        )
+        inchikey_filter = (
+            'FILTER(STRSTARTS(UCASE(?value_inchikey), '
+            'CONCAT(?query_short_inchikey, "-")))'
+        )
+    else:
+        inchikey_values = sparql_inchikey_uri_values("ik_uri", inchikeys)
+        inchikey_filter = ""
 
     return f"""
 PREFIX hmdb: <https://hmdb.ca/resource/>
@@ -57,13 +74,14 @@ SELECT
   (GROUP_CONCAT(DISTINCT STR(?hmdb_disease_label_value); separator="|") AS ?hmdb_disease_label)
   (GROUP_CONCAT(DISTINCT STR(?hmdb_biospecimen_value); separator="|") AS ?hmdb_biospecimen)
 WHERE {{
-  {sparql_inchikey_uri_values("ik_uri", inchikeys)}
+  {inchikey_values}
 
   ?hmdb_metabolite a hmdbv:Metabolite ;
     schema:inChIKey ?ik_uri ;
     hmdbv:accession ?hmdb_accession .
 
   BIND(REPLACE(STR(?ik_uri), "^.*/", "") AS ?value_inchikey)
+  {inchikey_filter}
 
   OPTIONAL {{ ?hmdb_metabolite rdfs:label ?hmdb_label_value . }}
   OPTIONAL {{ ?hmdb_metabolite hmdbv:chemicalFormula ?hmdb_formula_value . }}

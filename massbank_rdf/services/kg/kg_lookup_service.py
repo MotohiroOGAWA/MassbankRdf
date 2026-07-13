@@ -104,6 +104,7 @@ class KgLookupService:
         kg_n: int = 3,
         limit: int | None = 100,
         return_query: bool = False,
+        use_short_inchikey: bool = False,
     ):
         """Search KG evidence by InChIKeys in MassBank search result table.
 
@@ -134,6 +135,7 @@ class KgLookupService:
             inchikeys,
             limit=limit,
             return_query=return_query,
+            use_short_inchikey=use_short_inchikey,
         )
 
 
@@ -146,6 +148,7 @@ class KgLookupService:
         kg_n: int = 3,
         limit: int | None = 100,
         return_query: bool = False,
+        use_short_inchikey: bool = False,
     ):
         """Search KG evidence JSON by InChIKeys in MassBank results."""
         inchikeys = self.extract_inchikeys_from_massbank_records(
@@ -158,6 +161,7 @@ class KgLookupService:
             inchikeys,
             limit=limit,
             return_query=return_query,
+            use_short_inchikey=use_short_inchikey,
         )
 
     def extract_inchikeys_from_massbank_records(
@@ -200,12 +204,14 @@ class KgLookupService:
         *,
         limit: int | None = 100,
         return_query: bool = False,
+        use_short_inchikey: bool = False,
     ):
         """Search compact KG evidence JSON by one InChIKey."""
         return self.search_evidence_by_inchikeys(
             [inchikey],
             limit=limit,
             return_query=return_query,
+            use_short_inchikey=use_short_inchikey,
         )
 
     def search_evidence_by_inchikeys(
@@ -214,12 +220,14 @@ class KgLookupService:
         *,
         limit: int | None = 100,
         return_query: bool = False,
+        use_short_inchikey: bool = False,
     ):
         """Search compact KG evidence JSON by multiple InChIKeys."""
         result = self.search_by_inchikeys(
             inchikeys,
             limit=limit,
             return_query=return_query,
+            use_short_inchikey=use_short_inchikey,
         )
 
         if return_query:
@@ -234,12 +242,14 @@ class KgLookupService:
         *,
         limit: int | None = 100,
         return_query: bool = False,
+        use_short_inchikey: bool = False,
     ):
         """Search KG evidence by one InChIKey."""
         return self.search_by_inchikeys(
             [inchikey],
             limit=limit,
             return_query=return_query,
+            use_short_inchikey=use_short_inchikey,
         )
 
     def search_by_inchikeys(
@@ -248,6 +258,7 @@ class KgLookupService:
         *,
         limit: int | None = 100,
         return_query: bool = False,
+        use_short_inchikey: bool = False,
     ):
         """Search KG evidence by multiple InChIKeys."""
         inchikeys = normalize_inchikey_values(inchikeys)
@@ -263,20 +274,24 @@ class KgLookupService:
         pubchem_compound_query = build_pubchem_compound_query(
             inchikeys,
             limit=limit,
+            use_short_inchikey=use_short_inchikey,
         )
         pubchem_pathway_query = build_pubchem_pathway_query(
             inchikeys,
             limit=limit,
+            use_short_inchikey=use_short_inchikey,
         )
         hmdb_query = build_hmdb_query(
             inchikeys,
             limit=limit,
+            use_short_inchikey=use_short_inchikey,
         )
         knapsack_activity_query = build_knapsack_activity_query(
             inchikeys,
             use_from_graph=self.knapsack_client.use_from_graph,
             graph_iri=self.knapsack_client.graph_iri or "",
             limit=limit,
+            use_short_inchikey=use_short_inchikey,
         )
 
         pubchem_compound_data = self.pubchem_client.select(

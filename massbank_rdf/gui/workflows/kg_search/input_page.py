@@ -198,6 +198,7 @@ def create_app(
         precursor_mz: float | None,
         precursor_tolerance: float | None,
         max_massbank_inchikey: int | float | None,
+        use_short_inchikey: bool,
         llm_enabled: bool,
         llm_output_language: str,
         azure_openai_endpoint: str,
@@ -264,6 +265,7 @@ def create_app(
                     if normalized_max_massbank_inchikey is not None
                     else "-"
                 ),
+                "use_short_inchikey": bool(use_short_inchikey),
             },
             "llm_config": {
                 "enabled": bool(llm_enabled),
@@ -378,6 +380,15 @@ def create_app(
                         ),
                     )
 
+                    use_short_inchikey = gr.Checkbox(
+                        label="Connect KG using short InChIKey",
+                        value=False,
+                        info=(
+                            "Match by the first 14-character connectivity block, "
+                            "including stereochemical/protonation variants."
+                        ),
+                    )
+
 
 
                 gr.HTML("<h3>LLM Interpretation</h3>")
@@ -420,11 +431,15 @@ def create_app(
                     )
 
                 llm_user_context = gr.Textbox(
-                    label="Interpretation context",
+                    label="Sample origin / context",
                     lines=5,
                     placeholder=(
-                        "Example: This sample is from palm oil oxidation experiment. "
-                        "Focus on odor-related metabolites and lipid oxidation."
+                        "Example: Colorectal cancer mucosa sample; include known "
+                        "dietary or drug exposure when available."
+                    ),
+                    info=(
+                        "Used to classify compound origin and assess biological "
+                        "plausibility / likely false positives."
                     ),
                 )
 
@@ -464,6 +479,7 @@ def create_app(
                     precursor_mz,
                     precursor_tolerance,
                     max_massbank_inchikey,
+                    use_short_inchikey,
                     llm_enabled,
                     llm_output_language,
                     azure_openai_endpoint,

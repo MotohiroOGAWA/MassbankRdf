@@ -211,6 +211,7 @@ def build_sparql_loader(
             massbank_df,
             max_massbank_inchikey=max_massbank_inchikey,
         )
+        use_short_inchikey = bool(summary.get("use_short_inchikey", False))
 
         if len(inchikeys) == 0:
             return (
@@ -232,6 +233,7 @@ def build_sparql_loader(
             status = (
                 "KG lookup service is not configured yet.\n\n"
                 f"Max MassBank InChIKey for KG: {limit_label}\n"
+                f"InChIKey matching: {'short (connectivity)' if use_short_inchikey else 'full'}\n"
                 "Extracted InChIKeys:\n"
                 + "\n".join(inchikeys)
             )
@@ -252,6 +254,7 @@ def build_sparql_loader(
             inchikeys,
             limit=limit,
             return_query=True,
+            use_short_inchikey=use_short_inchikey,
         )
 
         payload["kg_inchikeys"] = inchikeys
@@ -269,6 +272,7 @@ def build_sparql_loader(
         status = (
             "SPARQL queries were generated and KG lookup was executed.\n\n"
             f"Max MassBank InChIKey for KG: {limit_label}\n"
+            f"InChIKey matching: {'short (connectivity)' if use_short_inchikey else 'full'}\n"
             f"Used InChIKeys: {', '.join(inchikeys)}"
         )
 
