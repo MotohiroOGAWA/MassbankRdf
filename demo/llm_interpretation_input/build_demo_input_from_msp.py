@@ -9,7 +9,12 @@ import pandas as pd
 
 from massbank_rdf.db.massbank.database import MassBankDatabase
 
-from demo.llm_interpretation_input.demo_input_builder import KG_TABLE_KEYS
+from demo.llm_interpretation_input.demo_input_builder import (
+    DEFAULT_PATHWAY_PER_INCHIKEY_LIMIT,
+    KG_TABLE_KEYS,
+    build_kg_evidence_with_pathway_limit,
+    reshape_kg_evidence_for_llm,
+)
 from massbank_rdf.services.llm_interpretation import build_kg_evidence_from_kg_data
 from massbank_rdf.models import MSPRecord
 
@@ -32,6 +37,7 @@ def build_demo_data_from_msp_file(
     kg_n: int = 3,
     kg_limit: int | None = 100,
     precursor_tolerance: float | None = None,
+    pathway_per_inchikey_limit: int = DEFAULT_PATHWAY_PER_INCHIKEY_LIMIT,
 ) -> dict[str, Any]:
     """Build and save demo input data from one MSP record.
 
@@ -39,6 +45,7 @@ def build_demo_data_from_msp_file(
     - MSP metadata as pandas DataFrame and peaks as numpy array
     - MassBank search result records as pandas DataFrame
     - KG lookup result as compact JSON evidence
+    - an LLM-friendly reshaped view of the KG evidence
     """
     input_path = Path(input_file).resolve()
     output_path = Path(output_dir).resolve()
@@ -68,18 +75,30 @@ def build_demo_data_from_msp_file(
 
     if run_kg_lookup:
         kg_lookup_service = _build_kg_lookup_service()
-        kg_evidence = kg_lookup_service.search_evidence_by_massbank_records(
+        kg_evidence = build_kg_evidence_with_pathway_limit(
+            kg_lookup_service,
             massbank_records,
             inchikey_column="inchikey",
             top_n=top_n,
             kg_n=kg_n,
             limit=kg_limit,
+            pathway_per_inchikey_limit=pathway_per_inchikey_limit,
         )
     else:
         kg_evidence = build_kg_evidence_from_kg_data(_empty_kg_tables())
     kg_manifest = _save_json(
         kg_evidence,
         output_path / "kg_evidence.json",
+    )
+
+    kg_evidence_llm = reshape_kg_evidence_for_llm(
+        kg_evidence,
+        massbank_records,
+        inchikey_column="inchikey",
+    )
+    kg_llm_manifest = _save_json(
+        kg_evidence_llm,
+        output_path / "llm_ready_evidence.json",
     )
     _remove_stale_kg_table_files(output_path / "kg_tables")
 
@@ -95,11 +114,13 @@ def build_demo_data_from_msp_file(
             "precursor_tolerance": precursor_tolerance,
             "kg_n": int(kg_n),
             "kg_limit": kg_limit,
+            "pathway_per_inchikey_limit": int(pathway_per_inchikey_limit),
             "run_kg_lookup": bool(run_kg_lookup),
         },
         "msp_record": msp_manifest,
         "massbank_records": massbank_manifest,
         "kg_evidence": kg_manifest,
+        "kg_evidence_llm": kg_llm_manifest,
     }
 
     manifest_path = output_path / "manifest.json"
@@ -113,6 +134,9 @@ def build_demo_data_from_msp_file(
     print(f"msp_peaks: {msp_record.peaks.shape[0]}")
     print(f"massbank_records: {len(massbank_records)}")
     print(f"kg_lookup: {'enabled' if run_kg_lookup else 'disabled'}")
+    print(f"pathway_per_inchikey_limit: {pathway_per_inchikey_limit}")
+    print(f"kg_evidence: {kg_manifest['json']}")
+    print(f"llm_ready_evidence: {kg_llm_manifest['json']}")
     print(f"manifest: {manifest_path}")
 
     return manifest
@@ -218,6 +242,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-matched-peaks", type=int, default=1)
     parser.add_argument("--kg-n", type=int, default=3)
     parser.add_argument("--kg-limit", type=int, default=100)
+    parser.add_argument(
+        "--pathway-limit",
+        type=int,
+        default=DEFAULT_PATHWAY_PER_INCHIKEY_LIMIT,
+        help=(
+            "Maximum number of PubChem pathways fetched per InChIKey. "
+            "Default is 100."
+        ),
+    )
     parser.add_argument("--precursor-tolerance", type=float, default=None)
     return parser.parse_args()
 
@@ -234,6 +267,7 @@ def main() -> None:
         kg_n=args.kg_n,
         kg_limit=args.kg_limit,
         precursor_tolerance=args.precursor_tolerance,
+        pathway_per_inchikey_limit=args.pathway_limit,
     )
 
 
