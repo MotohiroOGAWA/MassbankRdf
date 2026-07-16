@@ -206,6 +206,40 @@ mnt/app/data/db/kg.sqlite3         Normalized KG database (offline use)
 
 KG evidence and LLM interpretation results can be downloaded as JSON from the result page. GUI session data is stored in memory and is lost when the server restarts.
 
+### Building short-InChIKey databases
+
+The following command extracts short InChIKeys from the MassBank database, queries PubChem, HMDB, and KNApSAcK with short-InChIKey SPARQL, and then builds both a normalized KG database and its 1NF representation:
+
+```bash
+cd /workspaces/MassbankRdf/mnt/app
+python data/db/build_short_inchikey_databases.py
+```
+
+The default outputs are:
+
+```text
+data/db/kg_short_inchikey.sqlite3
+data/db/kg_short_inchikey_1nf.sqlite3
+```
+
+This process does not convert the existing `kg.sqlite3`. It performs fresh SPARQL lookups using the 14-character connectivity block. In the resulting databases, `kg_inchikeys.inchikey` contains the queried short InChIKey, while metadata returned for all matching full InChIKeys is linked to that short key.
+
+Both outputs also contain `inchikey_short_inchikeys`, with one row per original full InChIKey:
+
+| Column | Description |
+| --- | --- |
+| `inchikey` | Original 27-character full InChIKey |
+| `short_inchikey` | Corresponding 14-character short InChIKey |
+
+Custom input and output paths can be supplied as follows:
+
+```bash
+python data/db/build_short_inchikey_databases.py \
+  --massbank-db-path data/db/massbank.sqlite3 \
+  --short-db data/db/kg_short_inchikey.sqlite3 \
+  --short-1nf-db data/db/kg_short_inchikey_1nf.sqlite3
+```
+
 ## Repository structure
 
 ```text

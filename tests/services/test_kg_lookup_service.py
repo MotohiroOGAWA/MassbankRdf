@@ -180,6 +180,26 @@ class TestKgLookupService(unittest.TestCase):
             self.assertIn("STRSTARTS", query)
             self.assertNotIn('"BSYNRYMUTXBXSQ-UHFFFAOYSA-N"', query)
 
+    def test_search_by_inchikeys_accepts_short_key_as_input(self) -> None:
+        """Short mode should accept a 14-character key directly."""
+        service = self._make_service()
+
+        service.search_by_inchikeys(
+            ["BSYNRYMUTXBXSQ"],
+            limit=10,
+            use_short_inchikey=True,
+        )
+
+        all_queries = [
+            *self.pubchem_client.queries,
+            *self.hmdb_client.queries,
+            *self.knapsack_client.queries,
+        ]
+        self.assertEqual(len(all_queries), 4)
+        for query in all_queries:
+            self.assertIn('"BSYNRYMUTXBXSQ"', query)
+            self.assertIn("STRSTARTS", query)
+
     def test_search_by_inchikeys_uses_full_match_by_default(self) -> None:
         """The existing full-InChIKey matching remains the default."""
         service = self._make_service()

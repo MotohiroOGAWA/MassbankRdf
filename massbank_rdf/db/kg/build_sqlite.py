@@ -27,6 +27,8 @@ from massbank_rdf.gui.settings.endpoint_settings import (  # noqa: E402
 from massbank_rdf.services.kg.common import (  # noqa: E402
     extract_inchikey_value,
     normalize_inchikey_values,
+    normalize_short_inchikey_values,
+    to_short_inchikey,
 )
 
 
@@ -112,6 +114,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not save raw KG lookup results as per-batch JSON files.",
     )
+    parser.add_argument(
+        "--use-short-inchikey",
+        action="store_true",
+        help=(
+            "Query KG endpoints by the 14-character connectivity block and "
+            "store metadata per short InChIKey."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -175,8 +185,13 @@ def import_batch_kg_data(
     batch_index: int,
     kg_json_dir: Path | None,
     json_suffix: str | None = None,
+    use_short_inchikey: bool = False,
 ) -> None:
-    data = service.search_by_inchikeys(batch, limit=sparql_limit)
+    data = service.search_by_inchikeys(
+        batch,
+        limit=sparql_limit,
+        use_short_inchikey=use_short_inchikey,
+    )
     if kg_json_dir is not None:
         save_kg_batch_json(
             output_dir=kg_json_dir,
@@ -208,6 +223,7 @@ def import_batch_with_timeout_fallback(
     queried_at: datetime,
     batch_index: int,
     kg_json_dir: Path | None,
+    use_short_inchikey: bool = False,
 ) -> None:
     try:
         import_batch_kg_data(
@@ -219,6 +235,7 @@ def import_batch_with_timeout_fallback(
             queried_at=queried_at,
             batch_index=batch_index,
             kg_json_dir=kg_json_dir,
+            use_short_inchikey=use_short_inchikey,
         )
         return
     except RETRYABLE_KG_EXCEPTIONS as error:
@@ -250,6 +267,7 @@ def import_batch_with_timeout_fallback(
                 batch_index=batch_index,
                 kg_json_dir=kg_json_dir,
                 json_suffix=f"retry_{retry_index:04d}",
+                use_short_inchikey=use_short_inchikey,
             )
         except RETRYABLE_KG_EXCEPTIONS as error:
             record_failed_inchikey(
@@ -332,6 +350,39 @@ def load_massbank_inchikey_summary(
     )
 
 
+def build_short_inchikey_summary(
+    full_summary: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Aggregate MassBank metadata by short key and return full-key mappings."""
+    if full_summary.empty:
+        empty_summary = full_summary.copy()
+        mappings = pd.DataFrame(columns=["inchikey", "short_inchikey"])
+        return empty_summary, mappings
+
+    data = full_summary.copy()
+    data["short_inchikey"] = data["inchikey"].apply(to_short_inchikey)
+    data = data.dropna(subset=["short_inchikey"])
+    mappings = (
+        data[["inchikey", "short_inchikey"]]
+        .drop_duplicates()
+        .sort_values(["short_inchikey", "inchikey"])
+        .reset_index(drop=True)
+    )
+    summary = (
+        data.groupby("short_inchikey", as_index=False)
+        .agg(
+            massbank_record_count=("massbank_record_count", "sum"),
+            example_accession_id=("example_accession_id", "first"),
+            example_name=("example_name", "first"),
+            example_formula=("example_formula", "first"),
+        )
+        .rename(columns={"short_inchikey": "inchikey"})
+        .sort_values("inchikey")
+        .reset_index(drop=True)
+    )
+    return summary, mappings
+
+
 def build_sqlite(
     *,
     massbank_db_path: str | Path | None = None,
@@ -345,10 +396,14 @@ def build_sqlite(
     resume: bool = False,
     kg_json_dir: str | Path | None = None,
     save_kg_json: bool = True,
+    use_short_inchikey: bool = False,
 ) -> None:
     """Build KG SQLite database from MassBank InChIKeys and KG endpoints."""
     massbank_db = MassBankDatabase(massbank_db_path)
-    kg_db = KgDatabase(kg_db_path)
+    kg_db = KgDatabase(
+        kg_db_path,
+        use_short_inchikey=use_short_inchikey,
+    )
     resolved_kg_json_dir = (
         Path(kg_json_dir)
         if kg_json_dir is not None
@@ -363,14 +418,28 @@ def build_sqlite(
     else:
         kg_db.create_tables()
 
-    summary = load_massbank_inchikey_summary(massbank_db)
-    inchikeys = normalize_inchikey_values(summary["inchikey"].tolist())
+    full_summary = load_massbank_inchikey_summary(massbank_db)
+    mappings: pd.DataFrame | None = None
+    if use_short_inchikey:
+        summary, mappings = build_short_inchikey_summary(full_summary)
+        inchikeys = normalize_short_inchikey_values(
+            summary["inchikey"].tolist()
+        )
+    else:
+        summary = full_summary
+        inchikeys = normalize_inchikey_values(summary["inchikey"].tolist())
 
     if max_inchikeys is not None:
         inchikeys = inchikeys[: max(0, int(max_inchikeys))]
         summary = summary[summary["inchikey"].isin(inchikeys)].reset_index(drop=True)
+        if mappings is not None:
+            mappings = mappings[
+                mappings["short_inchikey"].isin(inchikeys)
+            ].reset_index(drop=True)
 
     kg_db.upsert_massbank_inchikey_summary(summary)
+    if mappings is not None:
+        kg_db.replace_inchikey_short_mappings(mappings)
 
     total_inchikey_count = len(inchikeys)
     if resume:
@@ -414,7 +483,8 @@ def build_sqlite(
     queried_at = datetime.utcnow()
 
     print(
-        f"Loaded {total_inchikey_count} unique MassBank InChIKeys; "
+        f"Loaded {total_inchikey_count} unique MassBank "
+        f"{'short ' if use_short_inchikey else ''}InChIKeys; "
         f"{len(inchikeys)} remain to query.",
         flush=True,
     )
@@ -448,6 +518,7 @@ def build_sqlite(
             queried_at=queried_at,
             batch_index=batch_index,
             kg_json_dir=resolved_kg_json_dir,
+            use_short_inchikey=use_short_inchikey,
         )
 
     print(f"Wrote KG SQLite database to: {kg_db.db_path}", flush=True)
@@ -469,6 +540,7 @@ def main() -> None:
         resume=args.resume,
         kg_json_dir=args.kg_json_dir,
         save_kg_json=not args.no_save_kg_json,
+        use_short_inchikey=args.use_short_inchikey,
     )
 
 

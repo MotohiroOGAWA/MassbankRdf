@@ -5,12 +5,15 @@ from pathlib import Path
 from typing import Iterable, TypeVar
 
 import pandas as pd
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy import create_engine
 
-from massbank_rdf.services.kg.common import extract_inchikey_value
+from massbank_rdf.services.kg.common import (
+    extract_inchikey_value,
+    to_short_inchikey,
+)
 
 from .tables.basetb import Base
 from .tables.kg_metadata import (
@@ -65,8 +68,10 @@ class KgDatabase:
         db_path: str | Path | None = None,
         *,
         echo: bool = False,
+        use_short_inchikey: bool = False,
     ) -> None:
         self.db_path = Path(db_path) if db_path is not None else self.DEFAULT_DB_PATH
+        self.use_short_inchikey = bool(use_short_inchikey)
         self.engine = self._create_engine(self.db_path, echo=echo)
         self.SessionLocal = sessionmaker(
             bind=self.engine,
@@ -100,6 +105,64 @@ class KgDatabase:
 
     def session(self) -> Session:
         return self.SessionLocal()
+
+    def _normalize_inchikey_key(self, value: object) -> str | None:
+        if self.use_short_inchikey:
+            return to_short_inchikey(str(value)) if value is not None else None
+        return extract_inchikey_value(value)
+
+    def replace_inchikey_short_mappings(
+        self,
+        mappings: pd.DataFrame,
+    ) -> None:
+        """Replace the full-to-short InChIKey mapping table."""
+        required = {"inchikey", "short_inchikey"}
+        missing = required.difference(mappings.columns)
+        if missing:
+            raise ValueError(f"mappings is missing columns: {sorted(missing)}")
+
+        rows = [
+            {
+                "inchikey": extract_inchikey_value(row["inchikey"]),
+                "short_inchikey": to_short_inchikey(row["short_inchikey"]),
+            }
+            for _, row in mappings.iterrows()
+        ]
+        rows = [
+            row
+            for row in rows
+            if row["inchikey"] is not None and row["short_inchikey"] is not None
+        ]
+
+        with self.engine.begin() as conn:
+            conn.exec_driver_sql(
+                """
+                CREATE TABLE IF NOT EXISTS inchikey_short_inchikeys (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    inchikey TEXT NOT NULL UNIQUE,
+                    short_inchikey TEXT NOT NULL,
+                    FOREIGN KEY (short_inchikey) REFERENCES kg_inchikeys(inchikey)
+                )
+                """
+            )
+            conn.exec_driver_sql(
+                """
+                CREATE INDEX IF NOT EXISTS idx_inchikey_short_inchikeys_short
+                ON inchikey_short_inchikeys(short_inchikey)
+                """
+            )
+            conn.exec_driver_sql("DELETE FROM inchikey_short_inchikeys")
+            if rows:
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO inchikey_short_inchikeys (
+                            inchikey, short_inchikey
+                        ) VALUES (:inchikey, :short_inchikey)
+                        """
+                    ),
+                    rows,
+                )
 
     def upsert_massbank_inchikey_summary(
         self,
@@ -145,7 +208,7 @@ class KgDatabase:
             inchikeys.update(
                 value
                 for value in (
-                    extract_inchikey_value(item)
+                    self._normalize_inchikey_key(item)
                     for item in replace_for_inchikeys
                 )
                 if value is not None
@@ -250,7 +313,7 @@ class KgDatabase:
         error: Exception | None = None,
     ) -> None:
         """Record a failed KG lookup and mark the InChIKey as completed."""
-        normalized = extract_inchikey_value(inchikey)
+        normalized = self._normalize_inchikey_key(inchikey)
         if normalized is None:
             return
 
@@ -308,7 +371,7 @@ class KgDatabase:
         """Return kg_inchikeys.id values for normalized InChIKeys."""
         normalized = [
             value
-            for value in (extract_inchikey_value(item) for item in inchikeys)
+            for value in (self._normalize_inchikey_key(item) for item in inchikeys)
             if value is not None
         ]
 
@@ -353,7 +416,7 @@ class KgDatabase:
         queried_at: datetime | None,
     ) -> None:
         rows = summary_df.copy()
-        rows["inchikey"] = rows["inchikey"].apply(extract_inchikey_value)
+        rows["inchikey"] = rows["inchikey"].apply(self._normalize_inchikey_key)
         rows = rows.dropna(subset=["inchikey"])
 
         existing = {
@@ -438,14 +501,16 @@ class KgDatabase:
         ]:
             session.execute(delete(table).where(table.kg_inchikey_id.in_(ids)))
 
-    @staticmethod
-    def _collect_inchikeys(frames: Iterable[pd.DataFrame]) -> set[str]:
+    def _collect_inchikeys(
+        self,
+        frames: Iterable[pd.DataFrame],
+    ) -> set[str]:
         inchikeys: set[str] = set()
         for frame in frames:
             if frame.empty or "value_inchikey" not in frame.columns:
                 continue
             for value in frame["value_inchikey"].tolist():
-                inchikey = extract_inchikey_value(value)
+                inchikey = self._normalize_inchikey_key(value)
                 if inchikey is not None:
                     inchikeys.add(inchikey)
         return inchikeys
@@ -458,7 +523,7 @@ class KgDatabase:
     ) -> None:
         df = self._prepare_frame(df, ["value_inchikey", "pubchem_compound", "descriptorType", "descriptor_value"])
         for _, row in df.iterrows():
-            inchikey = extract_inchikey_value(row.get("value_inchikey"))
+            inchikey = self._normalize_inchikey_key(row.get("value_inchikey"))
             kg_inchikey_id = inchikey_id_by_value.get(inchikey) if inchikey is not None else None
             compound_uri = self._optional_str(row.get("pubchem_compound"))
             if kg_inchikey_id is None or compound_uri is None:
@@ -502,7 +567,7 @@ class KgDatabase:
     ) -> None:
         df = self._prepare_frame(df, ["value_inchikey", "pubchem_compound", "pathway", "pathway_label", "pathway_organism"])
         for _, row in df.iterrows():
-            inchikey = extract_inchikey_value(row.get("value_inchikey"))
+            inchikey = self._normalize_inchikey_key(row.get("value_inchikey"))
             kg_inchikey_id = inchikey_id_by_value.get(inchikey) if inchikey is not None else None
             compound_uri = self._optional_str(row.get("pubchem_compound"))
             pathway_uri = self._optional_str(row.get("pathway"))
@@ -554,7 +619,7 @@ class KgDatabase:
         ]
         df = self._prepare_frame(df, columns)
         for _, row in df.iterrows():
-            inchikey = extract_inchikey_value(row.get("value_inchikey"))
+            inchikey = self._normalize_inchikey_key(row.get("value_inchikey"))
             kg_inchikey_id = inchikey_id_by_value.get(inchikey) if inchikey is not None else None
             metabolite_uri = self._optional_str(row.get("hmdb_metabolite"))
             if kg_inchikey_id is None or metabolite_uri is None:
@@ -646,7 +711,7 @@ class KgDatabase:
         ]
         df = self._prepare_frame(df, columns)
         for _, row in df.iterrows():
-            inchikey = extract_inchikey_value(row.get("value_inchikey"))
+            inchikey = self._normalize_inchikey_key(row.get("value_inchikey"))
             kg_inchikey_id = inchikey_id_by_value.get(inchikey) if inchikey is not None else None
             knapsack_id = self._optional_str(row.get("knapsack_id"))
             if kg_inchikey_id is None or knapsack_id is None:

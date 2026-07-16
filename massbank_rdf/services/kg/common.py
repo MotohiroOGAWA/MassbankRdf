@@ -9,6 +9,10 @@ INCHIKEY_PATTERN = re.compile(
     r"[A-Z]{14}-[A-Z]{10}-[A-Z]",
     re.IGNORECASE,
 )
+SHORT_INCHIKEY_PATTERN = re.compile(
+    r"(?<![A-Z])[A-Z]{14}(?![A-Z])",
+    re.IGNORECASE,
+)
 
 SHORT_INCHIKEY_LENGTH = 14
 
@@ -55,10 +59,14 @@ def to_short_inchikey(value: str) -> str | None:
     """Return the 14-character connectivity block of an InChIKey."""
     inchikey = extract_inchikey_value(value)
 
-    if inchikey is None:
+    if inchikey is not None:
+        return inchikey[:SHORT_INCHIKEY_LENGTH]
+
+    match = SHORT_INCHIKEY_PATTERN.search(str(value))
+    if match is None:
         return None
 
-    return inchikey[:SHORT_INCHIKEY_LENGTH]
+    return match.group(0).upper()
 
 
 def normalize_short_inchikey_values(

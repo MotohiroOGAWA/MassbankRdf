@@ -8,6 +8,7 @@ from massbank_rdf.services.kg.common import (
     ensure_columns,
     extract_inchikey_value,
     normalize_inchikey_values,
+    normalize_short_inchikey_values,
 )
 from massbank_rdf.services.kg.sparql_client import SparqlClient
 from massbank_rdf.services.kg.query_builders.hmdb_query_builder import (
@@ -261,7 +262,10 @@ class KgLookupService:
         use_short_inchikey: bool = False,
     ):
         """Search KG evidence by multiple InChIKeys."""
-        inchikeys = normalize_inchikey_values(inchikeys)
+        if use_short_inchikey:
+            inchikeys = normalize_short_inchikey_values(inchikeys)
+        else:
+            inchikeys = normalize_inchikey_values(inchikeys)
 
         if len(inchikeys) == 0:
             data = self._empty_result()
