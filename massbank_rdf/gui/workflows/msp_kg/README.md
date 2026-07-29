@@ -110,6 +110,7 @@ MassBank検索では25スペクトルごと、KG検索では1チャンクごと�
 - m/z tolerance
 - Min matched peaks
 - Minimum cosine similarity
+- KG metadata rankの有効・無効
 - precursor m/zフィルターの有効・無効
 - precursor m/zのMSPカラム名
 - precursor tolerance
@@ -197,6 +198,18 @@ cosine similarity > 0.5
 `0.5`ちょうどの候補も除外対象である。この設定はKnowledge Graph
 Search、Common Peak Annotation、MSP KG workflowで共通の入力
 コンポーネントと判定処理を使用する。
+
+### Use KG metadata rank
+
+デフォルトはONである。
+
+- ON：`massbank_similarity_rank + kg_metadata_rank`で候補を選ぶ
+- OFF：`massbank_similarity_rank`だけで候補を選ぶ
+
+OFFの場合もKG metadata countを一括取得し、`kg_metadata_count`と
+`kg_metadata_rank`を出力へ残す。候補順位へ使用しないだけである。
+`ranking_mode`はONで`massbank_similarity_plus_kg_metadata`、OFFで
+`massbank_similarity_only`となる。
 
 ### Precursor tolerance
 
@@ -405,6 +418,8 @@ combined_rank_sum
 
 `combined_rank_sum`が小さい候補から採用する。同点の場合は、
 MassBank類似度が高い候補、KG metadata countが多い候補の順にする。
+`Use KG metadata rank`がOFFの場合、`combined_rank_sum`には
+`massbank_similarity_rank`だけを格納する。
 
 この方法により、スペクトル類似度だけが高くKG情報がほとんどない候補と、
 十分な類似度を持ちKG metadataも豊富な候補のバランスを取る。
@@ -417,6 +432,7 @@ MassBank類似度が高い候補、KG metadata countが多い候補の順にす�
 - `kg_metadata_rank`
 - `combined_rank_sum`
 - `combined_rank`
+- `ranking_mode`
 
 combined rank順でInChIKeyを重複排除し、その後、
 `Max MassBank InChIKey for KG`を適用する。
@@ -771,6 +787,7 @@ msp_kg_result.zip
 | `kg_metadata_rank` | 候補内のKG metadata順位 |
 | `combined_rank_sum` | 類似度順位とKG順位の合計 |
 | `combined_rank` | rank sumに基づく最終順位 |
+| `ranking_mode` | KG metadata rankを候補順位へ使用したか |
 
 ## `spectrum_inchikey_annotations.csv`
 
@@ -900,6 +917,7 @@ result ZIPを入力画面へドラッグして設定を復元するための機�
     "mz_tolerance": 0.01,
     "min_matched_peaks": 1,
     "minimum_similarity": 0.5,
+    "use_kg_metadata_rank": true,
     "use_precursor_mz": true,
     "precursor_mz_column": "PRECURSORMZ",
     "precursor_tolerance": 0.01,

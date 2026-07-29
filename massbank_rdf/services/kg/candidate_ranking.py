@@ -27,6 +27,7 @@ def rank_candidates_with_kg_metadata(
     *,
     score_column: str = "score",
     inchikey_column: str = "inchikey",
+    use_kg_metadata_rank: bool = True,
 ) -> pd.DataFrame:
     """Rank candidates by similarity rank + KG metadata-count rank."""
     result = candidates.copy()
@@ -43,6 +44,11 @@ def rank_candidates_with_kg_metadata(
         result["kg_metadata_rank"] = pd.NA
         result["combined_rank_sum"] = pd.NA
         result["combined_rank"] = pd.NA
+        result["ranking_mode"] = (
+            "massbank_similarity_plus_kg_metadata"
+            if use_kg_metadata_rank
+            else "massbank_similarity_only"
+        )
         return result.drop(columns=["_normalized_inchikey"])
 
     by_key = (
@@ -78,7 +84,14 @@ def rank_candidates_with_kg_metadata(
     )
     by_key["combined_rank_sum"] = (
         by_key["massbank_similarity_rank"] + by_key["kg_metadata_rank"]
+        if use_kg_metadata_rank
+        else by_key["massbank_similarity_rank"]
     ).astype("Int64")
+    by_key["ranking_mode"] = (
+        "massbank_similarity_plus_kg_metadata"
+        if use_kg_metadata_rank
+        else "massbank_similarity_only"
+    )
     by_key["combined_rank"] = (
         by_key["combined_rank_sum"]
         .rank(method="dense", ascending=True)
@@ -98,9 +111,14 @@ def rank_candidates_with_kg_metadata(
         .fillna(0)
         .astype(int)
     )
+    sort_columns = ["combined_rank_sum", score_column]
+    ascending = [True, False]
+    if use_kg_metadata_rank:
+        sort_columns.append("kg_metadata_count")
+        ascending.append(False)
     result = result.sort_values(
-        ["combined_rank_sum", score_column, "kg_metadata_count"],
-        ascending=[True, False, False],
+        sort_columns,
+        ascending=ascending,
         na_position="last",
         kind="stable",
     )
@@ -114,6 +132,7 @@ def rank_grouped_candidates_with_kg_metadata(
     group_column: str,
     score_column: str = "score",
     inchikey_column: str = "inchikey",
+    use_kg_metadata_rank: bool = True,
 ) -> pd.DataFrame:
     """Rank every spectrum group with one batched KG-score lookup."""
     result = candidates.copy()
@@ -131,6 +150,11 @@ def rank_grouped_candidates_with_kg_metadata(
         result["kg_metadata_rank"] = pd.NA
         result["combined_rank_sum"] = pd.NA
         result["combined_rank"] = pd.NA
+        result["ranking_mode"] = (
+            "massbank_similarity_plus_kg_metadata"
+            if use_kg_metadata_rank
+            else "massbank_similarity_only"
+        )
         return result.drop(columns=["_normalized_inchikey"])
 
     by_group_key = (
@@ -179,7 +203,14 @@ def rank_grouped_candidates_with_kg_metadata(
     by_group_key["combined_rank_sum"] = (
         by_group_key["massbank_similarity_rank"]
         + by_group_key["kg_metadata_rank"]
+        if use_kg_metadata_rank
+        else by_group_key["massbank_similarity_rank"]
     ).astype("Int64")
+    by_group_key["ranking_mode"] = (
+        "massbank_similarity_plus_kg_metadata"
+        if use_kg_metadata_rank
+        else "massbank_similarity_only"
+    )
     by_group_key["combined_rank"] = (
         by_group_key.groupby(group_column)["combined_rank_sum"]
         .rank(method="dense", ascending=True)
@@ -206,7 +237,11 @@ def rank_grouped_candidates_with_kg_metadata(
             group_column,
             "combined_rank_sum",
             score_column,
-            "kg_metadata_count",
+            *(
+                ["kg_metadata_count"]
+                if use_kg_metadata_rank
+                else []
+            ),
         ]
         if column in result
     ]

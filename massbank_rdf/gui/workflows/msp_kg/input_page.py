@@ -414,6 +414,7 @@ def load_workflow_config_from_zip(
     int,
     float,
     bool,
+    bool,
     str,
     float,
     bool,
@@ -459,6 +460,7 @@ def load_workflow_config_from_zip(
         float(search.get("mz_tolerance", 0.01)),
         int(search.get("min_matched_peaks", 1)),
         float(search.get("minimum_similarity", 0.5)),
+        bool(search.get("use_kg_metadata_rank", True)),
         bool(search.get("use_precursor_mz", True)),
         str(search.get("precursor_mz_column", "PRECURSORMZ")),
         float(search.get("precursor_tolerance", 0.01)),
@@ -606,6 +608,7 @@ def create_app(
         mz_tolerance: float,
         min_matched_peaks: int,
         minimum_similarity: float,
+        use_kg_metadata_rank: bool,
         use_precursor_mz: bool,
         precursor_mz_column: str,
         precursor_tolerance: float | None,
@@ -687,6 +690,7 @@ def create_app(
                 "mz_tolerance": float(mz_tolerance),
                 "min_matched_peaks": int(min_matched_peaks),
                 "minimum_similarity": float(minimum_similarity),
+                "use_kg_metadata_rank": bool(use_kg_metadata_rank),
                 "use_precursor_mz": bool(use_precursor_mz),
                 "precursor_mz_column": str(precursor_mz_column).strip(),
                 "precursor_tolerance": precursor_tolerance,
@@ -708,6 +712,7 @@ def create_app(
                 "mz_tolerance": float(mz_tolerance),
                 "min_matched_peaks": int(min_matched_peaks),
                 "minimum_similarity": float(minimum_similarity),
+                "use_kg_metadata_rank": bool(use_kg_metadata_rank),
                 "use_precursor_mz": bool(use_precursor_mz),
                 "precursor_mz_column": str(precursor_mz_column).strip(),
                 "precursor_tolerance": (
@@ -846,6 +851,14 @@ def create_app(
                 mz_tolerance = gr.Number(label="m/z tolerance", value=0.01, minimum=0)
                 min_matched_peaks = gr.Number(label="Min matched peaks", value=1, precision=0, minimum=1)
                 minimum_similarity = create_minimum_similarity_input()
+                use_kg_metadata_rank = gr.Checkbox(
+                    label="Use KG metadata rank",
+                    value=True,
+                    info=(
+                        "ON: similarity rank + KG metadata rank. "
+                        "OFF: MassBank similarity rank only."
+                    ),
+                )
             with gr.Row():
                 use_precursor_mz = gr.Checkbox(
                     label="Use precursor m/z filter",
@@ -954,6 +967,7 @@ def create_app(
                     mz_tolerance,
                     min_matched_peaks,
                     minimum_similarity,
+                    use_kg_metadata_rank,
                     use_precursor_mz,
                     precursor_mz_column,
                     precursor_tolerance,
@@ -996,6 +1010,7 @@ def create_app(
                     msp_files, file_classes, resume_enabled,
                     top_n, mz_tolerance, min_matched_peaks,
                     minimum_similarity,
+                    use_kg_metadata_rank,
                     use_precursor_mz, precursor_mz_column, precursor_tolerance,
                     use_ion_mode, ion_mode_column,
                     max_massbank_inchikey, use_short_inchikey,

@@ -171,6 +171,7 @@ class TestMspKgInput(unittest.TestCase):
                 "mz_tolerance": 0.02,
                 "min_matched_peaks": 3,
                 "minimum_similarity": 0.6,
+                "use_kg_metadata_rank": False,
                 "use_precursor_mz": False,
                 "precursor_mz_column": "PRECURSOR_M/Z",
                 "precursor_tolerance": 0.5,
@@ -201,7 +202,7 @@ class TestMspKgInput(unittest.TestCase):
         self.assertEqual(loaded[1].loc[0, "sample_class"], "PR")
         self.assertEqual(loaded[1].loc[1, "sample_class"], "Control")
         self.assertEqual(loaded[2:], (
-            5, 0.02, 3, 0.6, False, "PRECURSOR_M/Z", 0.5,
+            5, 0.02, 3, 0.6, False, False, "PRECURSOR_M/Z", 0.5,
             True, "POLARITY", 2, True,
         ))
 

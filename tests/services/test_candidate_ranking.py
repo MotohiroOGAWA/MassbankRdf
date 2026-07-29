@@ -96,6 +96,35 @@ class TestCandidateRanking(unittest.TestCase):
         )
         self.assertEqual(len(result), 3)
 
+    def test_grouped_ranking_can_ignore_kg_metadata_rank(self) -> None:
+        source = pd.DataFrame(
+            [
+                {
+                    "spectrum_uid": "sample-a::1",
+                    "inchikey": "AAAAAAAAAAAAAA-BBBBBBBBBB-C",
+                    "score": 0.9,
+                },
+                {
+                    "spectrum_uid": "sample-a::1",
+                    "inchikey": "CCCCCCCCCCCCCC-DDDDDDDDDD-E",
+                    "score": 0.8,
+                },
+            ]
+        )
+        result = rank_grouped_candidates_with_kg_metadata(
+            source,
+            StubScoreService(),
+            group_column="spectrum_uid",
+            use_kg_metadata_rank=False,
+        )
+        self.assertEqual(result.iloc[0]["score"], 0.9)
+        self.assertEqual(result.iloc[0]["combined_rank_sum"], 1)
+        self.assertEqual(
+            result.iloc[0]["ranking_mode"],
+            "massbank_similarity_only",
+        )
+        self.assertEqual(result.iloc[1]["kg_metadata_count"], 100)
+
     def test_missing_inchikey_has_zero_metadata_count(self) -> None:
         source = pd.DataFrame(
             [

@@ -397,6 +397,9 @@ def build_batch_processor(
                 candidate_df,
                 kg_score_service,
                 group_column="spectrum_uid",
+                use_kg_metadata_rank=bool(
+                    job.get("use_kg_metadata_rank", True)
+                ),
             )
 
         annotations: list[dict[str, Any]] = []
@@ -523,6 +526,7 @@ def build_batch_processor(
                     "mz_tolerance",
                     "min_matched_peaks",
                     "minimum_similarity",
+                    "use_kg_metadata_rank",
                     "use_precursor_mz",
                     "precursor_mz_column",
                     "precursor_tolerance",

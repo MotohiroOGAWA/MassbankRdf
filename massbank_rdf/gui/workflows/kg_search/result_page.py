@@ -86,6 +86,8 @@ def format_search_summary(payload: dict[str, Any]) -> str:
         f"m/z tolerance: {summary.get('mz_tolerance', '-')}\n"
         f"Min matched peaks: {summary.get('min_matched_peaks', '-')}\n"
         f"Minimum cosine similarity: {summary.get('minimum_similarity', '-')}\n"
+        f"KG metadata rank: "
+        f"{'enabled' if summary.get('use_kg_metadata_rank', True) else 'disabled'}\n"
         f"{spectrum_filter_summary}"
         f"Max MassBank InChIKey for KG: {summary.get('max_massbank_inchikey', '-')}\n"
         f"KG InChIKey matching: "
