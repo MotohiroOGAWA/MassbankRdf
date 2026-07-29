@@ -161,7 +161,10 @@ def build_sparql_loader(
         str,
         gr.update,
     ]:
-        session_id = request.request.cookies.get(session_cookie_name)
+        session_id = (
+            request.request.cookies.get(session_cookie_name)
+            or request.request.query_params.get("job_id")
+        )
 
         if not session_id:
             return (
@@ -182,6 +185,27 @@ def build_sparql_loader(
                 "",
                 "",
                 "",
+                gr.update(selected="sparql"),
+            )
+
+        if payload.get("kg_precomputed"):
+            inchikeys = payload.get("kg_inchikeys", [])
+            queries = payload.get("kg_queries", {})
+            if not isinstance(inchikeys, list):
+                inchikeys = []
+            if not isinstance(queries, dict):
+                queries = {}
+            status = (
+                "KG lookup was completed during MSP batch processing.\n\n"
+                f"Unique InChIKeys: {len(inchikeys):,}\n"
+                "The queries below are grouped by KG lookup chunk."
+            )
+            return (
+                status,
+                _get_query(queries, "pubchem_compound"),
+                _get_query(queries, "pubchem_pathway"),
+                _get_query(queries, "hmdb"),
+                _get_query(queries, "knapsack_activity"),
                 gr.update(selected="sparql"),
             )
 

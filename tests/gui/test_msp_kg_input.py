@@ -1,0 +1,195 @@
+from __future__ import annotations
+
+from pathlib import Path
+import json
+import tempfile
+import unittest
+from unittest import mock
+import zipfile
+
+import pandas as pd
+
+from massbank_rdf.gui.workflows.msp_kg.input_page import (
+    _merge_kg_evidence,
+    _merge_kg_queries,
+    _normalize_ion_mode,
+    inspect_uploaded_msp,
+    load_workflow_config_from_zip,
+    parse_msp_records,
+    read_msp_input,
+    validate_output_name,
+)
+
+
+MSP_TEXT = """Name: Example
+Ion_mode: POSITIVE
+PrecursorMZ: 123.4
+Num Peaks: 2
+50.0 10
+75.0 20
+"""
+
+
+class TestMspKgInput(unittest.TestCase):
+    def test_read_msp_input_from_text(self) -> None:
+        record = read_msp_input(None, MSP_TEXT)
+        self.assertEqual(record.get_metadata_value("Name"), "Example")
+        self.assertEqual(record.peaks.shape, (2, 2))
+
+    def test_uploaded_file_takes_precedence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "record.msp"
+            path.write_text(
+                MSP_TEXT.replace("Example", "Uploaded"), encoding="utf-8"
+            )
+            record = read_msp_input(str(path), MSP_TEXT)
+        self.assertEqual(record.get_metadata_value("Name"), "Uploaded")
+
+    def test_non_msp_upload_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "record.txt"
+            path.write_text(MSP_TEXT, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"\.msp"):
+                read_msp_input(str(path), "")
+
+    def test_normalize_ion_mode(self) -> None:
+        for value, expected in [
+            ("positive", "POSITIVE"),
+            ("NEG", "NEGATIVE"),
+            ("+", "POSITIVE"),
+        ]:
+            with self.subTest(value=value):
+                self.assertEqual(_normalize_ion_mode(value), expected)
+
+    def test_parse_multiple_msp_records(self) -> None:
+        second = MSP_TEXT.replace("Example", "Second").replace(
+            "PrecursorMZ: 123.4", "PrecursorMZ: 200.0"
+        )
+        records = parse_msp_records(f"{MSP_TEXT}\n{second}")
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[1].get_metadata_value("Name"), "Second")
+
+    def test_uploaded_status_reports_record_and_peak_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "records.msp"
+            path.write_text(f"{MSP_TEXT}\n{MSP_TEXT}", encoding="utf-8")
+            status = inspect_uploaded_msp(str(path))
+        self.assertEqual(
+            status,
+            "MSP loaded: 2 records; 2 readable spectra; 4 total peaks.",
+        )
+
+    def test_upload_inspection_reports_empty_record_without_failing(self) -> None:
+        empty_record = "Name: Empty\nNum Peaks: 0\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "records.msp"
+            path.write_text(f"{MSP_TEXT}\n{empty_record}", encoding="utf-8")
+            with mock.patch(
+                "massbank_rdf.gui.workflows.msp_kg.input_page.gr.Warning"
+            ) as warning:
+                status = inspect_uploaded_msp(str(path))
+        self.assertIn("2 records; 1 readable spectra", status)
+        self.assertNotIn("Skipped", status)
+        warning.assert_called_once_with(
+            "Skipped 1 records without readable peaks."
+        )
+
+    def test_record_boundary_does_not_depend_on_num_peaks_value(self) -> None:
+        first = MSP_TEXT.replace("Num Peaks: 2", "Num Peaks: 999")
+        records = parse_msp_records(f"{first}\n{MSP_TEXT}")
+        self.assertEqual(len(records), 2)
+
+    def test_merge_chunked_kg_results(self) -> None:
+        merged = _merge_kg_evidence(
+            [
+                {
+                    "metadata": {"source": "test"},
+                    "features": [{"inchikey": "AAA"}],
+                },
+                {
+                    "metadata": {"source": "test"},
+                    "features": [
+                        {"inchikey": "AAA"},
+                        {"inchikey": "BBB"},
+                    ],
+                },
+            ]
+        )
+        self.assertEqual(
+            [feature["inchikey"] for feature in merged["features"]],
+            ["AAA", "BBB"],
+        )
+        self.assertEqual(merged["metadata"]["feature_count"], 2)
+        self.assertEqual(merged["metadata"]["kg_chunk_count"], 2)
+
+    def test_merge_chunked_queries_adds_chunk_labels(self) -> None:
+        queries = _merge_kg_queries(
+            [
+                {"pubchem_compound": "SELECT first"},
+                {"pubchem_compound": "SELECT second"},
+            ]
+        )
+        self.assertIn("# Chunk 1\nSELECT first", queries["pubchem_compound"])
+        self.assertIn("# Chunk 2\nSELECT second", queries["pubchem_compound"])
+
+    def test_windows_output_path_becomes_download_name(self) -> None:
+        self.assertEqual(
+            validate_output_name(
+                r"D:\WorkSpace\MetaboLights\MTBLS9074\result_pos\kgapp"
+            ),
+            "kgapp",
+        )
+
+    def test_output_name_is_required(self) -> None:
+        with self.assertRaisesRegex(ValueError, "required"):
+            validate_output_name("")
+
+    def test_result_zip_restores_settings_and_matching_classes(self) -> None:
+        config = {
+            "schema_version": 1,
+            "output_name": "restored",
+            "files": [
+                {"file_name": "a.msp", "sample_class": "PR"},
+                {"file_name": "missing.msp", "sample_class": "WT"},
+            ],
+            "search": {
+                "top_n": 5,
+                "mz_tolerance": 0.02,
+                "min_matched_peaks": 3,
+                "use_precursor_mz": False,
+                "precursor_mz_column": "PRECURSOR_M/Z",
+                "precursor_tolerance": 0.5,
+                "use_ion_mode": True,
+                "ion_mode_column": "POLARITY",
+                "max_massbank_inchikey": 2,
+                "use_short_inchikey": True,
+            },
+        }
+        current = pd.DataFrame(
+            [
+                {"file_name": "a.msp", "sample_class": ""},
+                {"file_name": "b.msp", "sample_class": "Control"},
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            archive_path = Path(directory) / "result.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr(
+                    "workflow_config.json",
+                    json.dumps(config),
+                )
+            loaded = load_workflow_config_from_zip(
+                str(archive_path),
+                current,
+            )
+        self.assertIn("1 matching file classes updated", loaded[0])
+        self.assertEqual(loaded[1].loc[0, "sample_class"], "PR")
+        self.assertEqual(loaded[1].loc[1, "sample_class"], "Control")
+        self.assertEqual(loaded[2:], (
+            "restored", 5, 0.02, 3, False, "PRECURSOR_M/Z", 0.5,
+            True, "POLARITY", 2, True,
+        ))
+
+
+if __name__ == "__main__":
+    unittest.main()

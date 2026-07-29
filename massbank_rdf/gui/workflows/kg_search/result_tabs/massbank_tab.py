@@ -160,13 +160,18 @@ def create_massbank_tab() -> gr.Dataframe:
 
 def build_massbank_loader(
     session_store: TemporarySessionStore,
+    *,
+    session_cookie_name: str = "kg_session_id",
 ):
     """Build callback for loading MassBank result."""
 
     def _load_massbank_result(
         request: gr.Request,
     ) -> tuple[pd.DataFrame, gr.update]:
-        session_id = request.request.cookies.get("kg_session_id")
+        session_id = (
+            request.request.cookies.get(session_cookie_name)
+            or request.request.query_params.get("job_id")
+        )
 
         if not session_id:
             return (

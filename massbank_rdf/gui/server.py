@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
 from pathlib import Path
 
 import uuid
@@ -21,6 +22,7 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 GUI_ROOT = Path(__file__).resolve().parent
+MSP_JOB_OUTPUT_ROOT = Path(tempfile.gettempdir()) / "massbank_rdf_msp_jobs"
 
 from .app import create_app as create_home_app
 from .workflows.kg_search.page import create_app as create_kg_app
@@ -29,6 +31,8 @@ from .workflows.kg_search.result_page import create_app as create_kg_result_app
 from .workflows.common_peak_annotation.page import create_app as create_common_peak_app
 from .workflows.common_peak_annotation.input_page import create_app as create_common_peak_input_app
 from .workflows.common_peak_annotation.result_page import create_app as create_common_peak_result_app
+from .workflows.msp_kg.input_page import create_app as create_msp_kg_input_app
+from .workflows.msp_kg.processor import build_batch_processor
 
 APP_LAYOUT_STYLES = """
 html,
@@ -199,26 +203,6 @@ footer {
 }
 """
 
-LIGHT_THEME_QUERY_PARAM = "__theme"
-
-
-def _light_theme_redirect_url(request: Request) -> str | None:
-    """Return a light-theme URL for browser page requests when needed."""
-    accepts_html = "text/html" in request.headers.get("accept", "")
-
-    if request.method != "GET" or not accepts_html:
-        return None
-
-    if request.query_params.get(LIGHT_THEME_QUERY_PARAM) == "light":
-        return None
-
-    return str(
-        request.url.include_query_params(
-            **{LIGHT_THEME_QUERY_PARAM: "light"}
-        )
-    )
-
-
 def _with_app_layout(blocks: gr.Blocks) -> gr.Blocks:
     blocks.css = "\n\n".join(filter(None, [APP_LAYOUT_STYLES, blocks.css]))
     blocks.config = blocks.get_config_file()
@@ -234,9 +218,14 @@ def create_server() -> FastAPI:
     common_peak_session_store = TemporarySessionStore(
         ttl_seconds=60 * 60,
     )
+    msp_kg_session_store = TemporarySessionStore(ttl_seconds=60 * 60)
 
     kg_lookup_service = create_kg_lookup_service_from_endpoint_settings(
         timeout=600,
+    )
+    msp_batch_processor = build_batch_processor(
+        msp_kg_session_store,
+        kg_lookup_service,
     )
 
     @app.middleware("http")
@@ -244,13 +233,9 @@ def create_server() -> FastAPI:
         request: Request,
         call_next,
     ) -> Response:
-        light_theme_url = _light_theme_redirect_url(request)
-
-        if light_theme_url is not None:
-            return RedirectResponse(url=light_theme_url)
-
         kg_session_id = request.cookies.get("kg_session_id")
         common_peak_session_id = request.cookies.get("common_peak_session_id")
+        msp_kg_session_id = request.cookies.get("msp_kg_session_id")
 
         response = await call_next(request)
 
@@ -272,6 +257,15 @@ def create_server() -> FastAPI:
                 max_age=60 * 60,
             )
 
+        if not msp_kg_session_id:
+            response.set_cookie(
+                key="msp_kg_session_id",
+                value=uuid.uuid4().hex,
+                httponly=True,
+                samesite="lax",
+                max_age=60 * 60,
+            )
+
         return response
 
     @app.get("/kg")
@@ -283,6 +277,39 @@ def create_server() -> FastAPI:
     @app.get("/common-peak/")
     def redirect_common_peak():
         return RedirectResponse(url="/common-peak/input/")
+
+    @app.get("/msp-kg")
+    @app.get("/msp-kg/")
+    def redirect_msp_kg():
+        return RedirectResponse(url="/msp-kg/input/")
+
+    gr.mount_gradio_app(
+        app,
+        _with_app_layout(
+            create_msp_kg_input_app(
+                session_store=msp_kg_session_store,
+                kg_lookup_service=kg_lookup_service,
+            )
+        ),
+        path="/msp-kg/input",
+        allowed_paths=[str(GUI_ROOT)],
+    )
+
+    gr.mount_gradio_app(
+        app,
+        _with_app_layout(
+            create_kg_result_app(
+                session_store=msp_kg_session_store,
+                kg_lookup_service=kg_lookup_service,
+                session_cookie_name="msp_kg_session_id",
+                workflow_title="MSP Knowledge Graph Annotation",
+                input_path="/msp-kg/input/",
+                preload_fn=msp_batch_processor,
+            )
+        ),
+        path="/msp-kg/result",
+        allowed_paths=[str(GUI_ROOT), str(MSP_JOB_OUTPUT_ROOT)],
+    )
 
     gr.mount_gradio_app(
         app,

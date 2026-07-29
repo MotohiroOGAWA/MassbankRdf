@@ -4,6 +4,7 @@ import gradio as gr
 
 from .workflows.kg_search.page import render_workflow_item_html as render_kg_workflow_item_html
 from .workflows.common_peak_annotation.page import render_workflow_item_html as render_common_peak_annotation_workflow_item_html
+from .workflows.msp_kg.page import render_workflow_item_html as render_msp_kg_workflow_item_html
 
 
 def create_app() -> gr.Blocks:
@@ -35,6 +36,7 @@ def create_app() -> gr.Blocks:
             )
 
             gr.HTML(render_kg_workflow_item_html())
+            gr.HTML(render_msp_kg_workflow_item_html())
             gr.HTML(render_common_peak_annotation_workflow_item_html())
 
     return app
