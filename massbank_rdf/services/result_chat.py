@@ -40,6 +40,81 @@ ENGLISH_STOP_WORDS = {
 }
 
 
+def is_kg_count_question(question: str) -> bool:
+    """Route explicit KG size/count questions to a local summary method."""
+    lowered = (question or "").lower()
+    has_kg = "kg" in lowered or "knowledge graph" in lowered or "ナレッジグラフ" in lowered
+    has_count = any(
+        term in lowered
+        for term in (
+            "データ数", "件数", "いくつ", "何件", "count",
+            "how many", "number of", "size",
+        )
+    )
+    return has_kg and has_count
+
+
+def summarize_kg_result_counts(
+    kg_evidence: dict[str, Any],
+    candidate_df: Any,
+    annotation_df: Any,
+) -> dict[str, Any]:
+    """Count compact KG entities and linked workflow records locally."""
+    features = kg_evidence.get("features", []) if isinstance(kg_evidence, dict) else []
+    features = [feature for feature in features if isinstance(feature, dict)]
+    entity_types = (
+        "compounds", "diseases", "pathways", "biospecimens",
+        "organisms", "activities",
+    )
+    associations = {name: 0 for name in entity_types}
+    unique_values = {name: set() for name in entity_types}
+    for feature in features:
+        entities = feature.get("entities", {})
+        if not isinstance(entities, dict):
+            continue
+        for name in entity_types:
+            grouped = entities.get(name, {})
+            groups = grouped.values() if isinstance(grouped, dict) else [grouped]
+            for rows in groups:
+                if not isinstance(rows, list):
+                    continue
+                associations[name] += len(rows)
+                unique_values[name].update(
+                    json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+                    for row in rows
+                )
+    candidates = (
+        candidate_df
+        if isinstance(candidate_df, pd.DataFrame)
+        else pd.DataFrame(candidate_df)
+    )
+    annotations = (
+        annotation_df
+        if isinstance(annotation_df, pd.DataFrame)
+        else pd.DataFrame(annotation_df)
+    )
+    return {
+        "kg_feature_count": len(features),
+        "unique_kg_inchikey_count": len(
+            {
+                str(feature.get("inchikey"))
+                for feature in features
+                if feature.get("inchikey")
+            }
+        ),
+        "unique_entity_counts": {
+            name: len(values) for name, values in unique_values.items()
+        },
+        "entity_association_counts": associations,
+        "massbank_candidate_rows": len(candidates),
+        "input_spectrum_count": (
+            int(annotations["spectrum_uid"].nunique())
+            if "spectrum_uid" in annotations
+            else len(annotations)
+        ),
+    }
+
+
 @dataclass(frozen=True)
 class ResultChatRetrieval:
     """Bounded deterministic evidence selected for one chat turn."""

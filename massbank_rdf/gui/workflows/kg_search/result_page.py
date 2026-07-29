@@ -22,6 +22,8 @@ from massbank_rdf.gui.workflows.kg_search.result_tabs.interpretation_tab import 
     create_interpretation_tab,
 )
 from massbank_rdf.gui.workflows.msp_kg.result_chat_tab import (
+    build_disease_analysis_handler,
+    build_disease_options_loader,
     build_result_chat_handler,
     create_result_chat_tab,
 )
@@ -218,6 +220,22 @@ def create_app(
         if is_msp_workflow
         else None
     )
+    load_disease_options = (
+        build_disease_options_loader(
+            session_store,
+            session_cookie_name=session_cookie_name,
+        )
+        if is_msp_workflow
+        else None
+    )
+    analyze_diseases = (
+        build_disease_analysis_handler(
+            session_store,
+            session_cookie_name=session_cookie_name,
+        )
+        if is_msp_workflow
+        else None
+    )
 
     with gr.Blocks(title=f"{workflow_title} - Result") as app:
         with gr.Group(elem_classes="massbank-page massbank-kg-result-page"):
@@ -308,6 +326,13 @@ def create_app(
                             result_chat_status,
                             result_chat_evidence,
                             result_chat_scope,
+                            disease_query,
+                            disease_class,
+                            disease_run,
+                            disease_status,
+                            related_diseases,
+                            disease_statistics,
+                            disease_spectra,
                         ) = create_result_chat_tab()
 
             gr.HTML(
@@ -394,6 +419,10 @@ def create_app(
                     inputs=[],
                     outputs=interpretation_status_text,
                 ).then(
+                    fn=load_disease_options,
+                    inputs=[],
+                    outputs=disease_class,
+                ).then(
                     fn=lambda: "Finished.",
                     inputs=[],
                     outputs=progress_text,
@@ -429,6 +458,16 @@ def create_app(
                         result_chat_status,
                         result_chat_evidence,
                         result_chat_scope,
+                    ],
+                )
+                disease_run.click(
+                    fn=analyze_diseases,
+                    inputs=[disease_query, disease_class],
+                    outputs=[
+                        disease_status,
+                        related_diseases,
+                        disease_statistics,
+                        disease_spectra,
                     ],
                 )
             else:

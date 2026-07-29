@@ -4,7 +4,11 @@ import unittest
 
 import pandas as pd
 
-from massbank_rdf.services.result_chat import retrieve_result_chat_evidence
+from massbank_rdf.services.result_chat import (
+    is_kg_count_question,
+    retrieve_result_chat_evidence,
+    summarize_kg_result_counts,
+)
 
 
 INCHIKEY = "AAAAAAAAAAAAAA-BBBBBBBBBB-C"
@@ -43,6 +47,28 @@ def candidates() -> pd.DataFrame:
 
 
 class TestResultChatRetrieval(unittest.TestCase):
+    def test_kg_count_question_routes_to_summary_method(self) -> None:
+        self.assertTrue(is_kg_count_question("KGのデータ数はいくつですか"))
+        self.assertTrue(is_kg_count_question("How many KG records are there?"))
+        self.assertFalse(is_kg_count_question("Is Alzheimer related to this KG?"))
+
+    def test_kg_summary_counts_without_sending_rows_to_llm(self) -> None:
+        counts = summarize_kg_result_counts(
+            evidence(),
+            candidates(),
+            pd.DataFrame(
+                [
+                    {"spectrum_uid": "sample-a::1"},
+                    {"spectrum_uid": "sample-a::1"},
+                ]
+            ),
+        )
+        self.assertEqual(counts["kg_feature_count"], 1)
+        self.assertEqual(counts["unique_kg_inchikey_count"], 1)
+        self.assertEqual(counts["unique_entity_counts"]["diseases"], 1)
+        self.assertEqual(counts["massbank_candidate_rows"], 1)
+        self.assertEqual(counts["input_spectrum_count"], 1)
+
     def test_japanese_disease_alias_retrieves_bounded_evidence(self) -> None:
         result = retrieve_result_chat_evidence(
             "この結果でアルツハイマーに関連する病気は観測されていますか？",

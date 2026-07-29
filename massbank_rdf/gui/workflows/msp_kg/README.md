@@ -613,6 +613,50 @@ Which KG metadata supports this answer?
 6,000文字に制限する。LLMの回答上限は800 tokenである。一致する根拠が
 ない場合はLLMを呼び出さず、「この結果では確認できない」と表示する。
 
+`How many KG records are there?`や`KGのデータ数はいくつですか`のような
+件数質問は、`summarize_kg_result_counts`へルーティングする。KG feature、
+ユニークInChIKey、entity種別のユニーク件数とassociation件数、MassBank
+候補行数、入力スペクトル数をローカル集計し、LLMを呼び出さない。
+
+#### Disease Analysis
+
+`Ask your results`内の専用機能であり、自由入力チャットの検索上限を
+引き上げずに疾患解析を行う。
+
+1. `Disease name or related term`へ疾患語を入力する
+2. sample classを1つ、または`All sample classes`を選ぶ
+3. `Find diseases and analyze class`を押す
+
+最初に`kg_evidence.json`からユニークな疾患名と接続InChIKeyの辞書を作る。
+直接一致や日本語aliasで選べない場合だけ、ユニーク疾患名のリストと入力語を
+LLMへ渡す。LLMの回答は保存結果に実在する疾患名だけに制限し、最大20疾患
+まで検証して採用する。MassBank候補行や全KG featureは疾患名選択のLLMへ
+渡さない。
+
+選択疾患について、次の関係をローカルで辿る。
+
+```text
+disease name → InChIKey → selected MassBank candidate
+             → spectrum_uid → sample class
+```
+
+`selected_for_kg=True`の候補だけを使用し、同じ疾患へ接続する候補が複数
+あってもスペクトル単位で重複排除する。各疾患・各sample classについて
+対象クラス対その他の2×2表を作り、Fisher exact testを実行する。
+疾患×解析対象クラスの全p値へBenjamini–Hochberg補正を行う。
+
+```text
+significant_in_class =
+    FDR < 0.05
+    and enrichment_ratio > 1
+    and class_spectra > 0
+```
+
+画面には関連疾患名、クラス別統計、接続スペクトル・ファイル・MassBank
+accession・cosine similarityを表示する。これは疾患そのものの検出ではなく、
+スペクトル類似候補のInChIKeyに付いたKG disease associationのクラス濃縮
+である。
+
 ## ZIP内の出力
 
 ```text
@@ -879,7 +923,7 @@ python data/db/build_kg_metadata_scores.py --db /path/to/kg.sqlite3
 msp_kg/
 ├── input_page.py   # 複数ファイル入力、クラス表、条件検証
 ├── processor.py    # MassBank/KGバッチ処理、統計、保存、再開
-├── result_chat_tab.py # 根拠制限付き対話UI
+├── result_chat_tab.py # 根拠制限付き対話・疾患解析UI
 ├── page.py         # Home画面のworkflow項目
 ├── __init__.py
 └── README.md
