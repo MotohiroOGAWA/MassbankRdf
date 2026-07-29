@@ -66,11 +66,10 @@ taken from each MSP record when available. The GUI reports progress separately
 for the MassBank and KG stages.
 
 Multiple MSP files can be uploaded together. Assign a sample class such as
-`PR` or `WT` to every file before running. An output archive name is required;
-the run is rejected when it is blank. Because the GUI runs on a server, it
+`PR` or `WT` to every file before running. Because the GUI runs on a server, it
 cannot directly write to an arbitrary client path such as `D:\...`. The
-complete result is packaged as a ZIP in the Output tab; use the browser save
-dialog to store it on the client PC. The browser MassBank table is
+complete result is automatically packaged as `msp_kg_result.zip` in the Output
+tab; use the browser save dialog to store it on the client PC. The browser MassBank table is
 aggregated by MassBank record and reports how many spectra and files were
 assigned to each record. Detailed spectrum-level results remain available in
 the local output:

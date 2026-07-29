@@ -5,6 +5,10 @@ import gradio as gr
 
 from massbank_rdf.db.massbank.database import MassBankDatabase
 from massbank_rdf.gui.session_store import TemporarySessionStore
+from massbank_rdf.services.kg.candidate_ranking import (
+    rank_candidates_with_kg_metadata,
+)
+from massbank_rdf.services.kg.metadata_score_service import KgMetadataScoreService
 
 
 def make_empty_massbank_dataframe() -> pd.DataFrame:
@@ -201,6 +205,10 @@ def build_massbank_loader(
             result_df = pd.DataFrame(result_df)
 
         formatted_df = format_massbank_result_dataframe(result_df)
+        formatted_df = rank_candidates_with_kg_metadata(
+            formatted_df,
+            KgMetadataScoreService(),
+        )
 
         payload["massbank_display_df"] = formatted_df
         session_store.set(session_id, payload)

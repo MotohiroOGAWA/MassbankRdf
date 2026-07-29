@@ -55,7 +55,7 @@ Skipped 535 records without readable peaks.
 
 ### Files and sample classes
 
-アップロードしたファイルごとに、`sample_class`を入力する。
+アップロードしたファイルごとに、`sample_class`を入力できる。
 
 例：
 
@@ -66,30 +66,16 @@ Skipped 535 records without readable peaks.
 | WT_01.msp | WT |
 | WT_02.msp | WT |
 
-すべてのファイルにクラスが必要である。空欄が1つでもある場合はRunを
-開始しない。また、同名のMSPファイルを複数アップロードすることは
-できない。
+アップロード時の初期値はファイル名である。空欄へ変更した場合も、Run
+開始時にそのファイル名をクラスとして自動設定する。このためクラス指定を
+省略したファイル同士は、それぞれ別のクラスとして解析される。同名のMSP
+ファイルを複数アップロードすることはできない。
 
-### Download folder/archive name
+### 出力ZIP
 
-出力ZIPの名前を指定する必須項目である。
-
-```text
-kgapp
-```
-
-Windowsパスを貼り付けることもできる。
-
-```text
-D:\WorkSpace\MetaboLights\MTBLS9074\result_pos\kgapp
-```
-
-ただし、GUIはサーバー上で動作するため、サーバーからクライアントPCの
-`D:\`へ直接書き込むことはできない。この場合は末尾の`kgapp`を出力名
-として使用し、resultページから`kgapp.zip`をダウンロードする。
-ブラウザの保存ダイアログでクライアントPC上の保存場所を選択する。
-
-出力名が指定されていない場合はRunを開始しない。
+出力名の入力は不要である。処理完了後、resultページから
+`msp_kg_result.zip`をダウンロードする。ブラウザの保存ダイアログで
+クライアントPC上の保存場所を選択する。
 
 ### Resume from checkpoint
 
@@ -103,21 +89,27 @@ MassBank検索では25スペクトルごと、KG検索では1チャンクごと�
 - 同じファイル名
 - 同じサンプルクラス
 - 同じ検索条件
-- 同じ出力名
 
 設定が一致しない場合、誤った結果を混ぜないため再開を拒否する。
 正常終了後はチェックポイントを削除する。
 
+このチェックポイントは、同じサーバープロセスの一時領域に残った中断処理
+を再開するためのものである。result ZIPには計算途中のチェックポイントを
+含めないため、result ZIPのドラッグ操作だけで計算途中から再開することは
+できない。
+
 ### Load settings from previous result ZIP
 
 以前のresult ZIPを入力画面へドラッグすると、ZIP内の
-`workflow_config.json`から検索設定を復元する。
+`workflow_config.json`から検索設定を復元する。この操作は入力設定の復元で
+あり、MassBank検索やKG検索の計算状態は復元しない。
 
 復元対象：
 
 - MassBank top N
 - m/z tolerance
 - Min matched peaks
+- Minimum cosine similarity
 - precursor m/zフィルターの有効・無効
 - precursor m/zのMSPカラム名
 - precursor tolerance
@@ -125,7 +117,6 @@ MassBank検索では25スペクトルごと、KG検索では1チャンクごと�
 - ion modeのMSPカラム名
 - Max MassBank InChIKey for KG
 - short InChIKey使用有無
-- 出力名
 
 現在アップロードされているMSPファイルと、保存設定内の`file_name`が
 一致した場合、その行の`sample_class`も復元する。一致しないファイルの
@@ -150,6 +141,20 @@ Azure OpenAI API keyなどの認証情報は、安全のためZIPへ保存せず
 ### Min matched peaks
 
 MassBank候補として採用するために必要な最小一致ピーク数である。
+
+### Minimum cosine similarity
+
+MassBank候補の類似度下限で、デフォルトは`0.5`である。
+
+指定値以下の候補を除外する。デフォルトの場合、次の条件になる。
+
+```text
+cosine similarity > 0.5
+```
+
+`0.5`ちょうどの候補も除外対象である。この設定はKnowledge Graph
+Search、Common Peak Annotation、MSP KG workflowで共通の入力
+コンポーネントと判定処理を使用する。
 
 ### Precursor tolerance
 
@@ -247,9 +252,8 @@ Runを押すと、次を検証する。
 
 1. MSPファイルが1つ以上ある
 2. ファイル名が重複していない
-3. すべてのファイルにsample classがある
-4. 出力名が指定されている
-5. MSP内に読み取り可能なスペクトルがある
+3. sample classの空欄を各ファイル名で補完できる
+4. MSP内に読み取り可能なスペクトルがある
 
 検証成功後、resultページへ遷移してバッチ処理を開始する。
 
@@ -285,7 +289,19 @@ Input spectrum 3 → MassBank top N
 MassBank search: spectrum 350/1,394
 ```
 
-各候補へ次の情報を付ける。
+検索ループ中は、各hitを次のコンパクトな値だけでチェックポイントへ記録する。
+
+```text
+(spectrum index, MassBank record index, cosine score,
+ matched peak count, candidate rank)
+```
+
+MassBank化合物metadataとKG metadata scoreをスペクトルごとには取得しない。
+全スペクトルの検索完了後、ユニークなMassBank record indexのmetadataを
+一括取得し、続いてユニークなInChIKeyのKG metadata scoreを1回のバッチで
+取得する。
+
+最終的に各候補へ次の情報を付ける。
 
 - 元MSPファイル
 - sample class
@@ -301,8 +317,62 @@ MassBank search: spectrum 350/1,394
 
 ### 4. スペクトルごとのInChIKeyアノテーション
 
-各スペクトルのMassBank候補から、順序を保ったままInChIKeyを重複排除
-する。その後、`Max MassBank InChIKey for KG`を適用する。
+各スペクトルのMassBank候補へ、MassBank類似度と事前計算済みKG
+metadata量を組み合わせた順位を付ける。
+
+`data/db/kg.sqlite3`にはInChIKeyごとのmetadata件数を事前集計した
+`kg_metadata_scores`テーブルを持つ。通常の検索時にPubChem、HMDB、
+KNApSAcKの全関係を再集計せず、このテーブルをInChIKey indexで参照する。
+
+KG metadata countは次のユニーク件数の合計である。
+
+- PubChem compound
+- PubChem descriptor
+- PubChem pathway
+- HMDB metabolite
+- HMDB pathway
+- HMDB disease
+- HMDB biospecimen
+- KNApSAcK record
+- KNApSAcK activity
+- KNApSAcK activity category
+- KNApSAcK activity function
+- KNApSAcK target species
+
+候補InChIKeyごとに次を計算する。
+
+```text
+massbank_similarity_rank
+    = best cosine similarityの降順順位
+```
+
+```text
+kg_metadata_rank
+    = kg_metadata_countの降順順位
+```
+
+```text
+combined_rank_sum
+    = massbank_similarity_rank + kg_metadata_rank
+```
+
+`combined_rank_sum`が小さい候補から採用する。同点の場合は、
+MassBank類似度が高い候補、KG metadata countが多い候補の順にする。
+
+この方法により、スペクトル類似度だけが高くKG情報がほとんどない候補と、
+十分な類似度を持ちKG metadataも豊富な候補のバランスを取る。
+
+候補表には次の列を追加する。
+
+- `massbank_similarity_rank`
+- `kg_metadata_count`
+- KG source/entity別metadata count
+- `kg_metadata_rank`
+- `combined_rank_sum`
+- `combined_rank`
+
+combined rank順でInChIKeyを重複排除し、その後、
+`Max MassBank InChIKey for KG`を適用する。
 
 候補表の`selected_for_kg`が`True`の行は、その候補のInChIKeyが
 KG検索対象として採用されたことを示す。
@@ -468,7 +538,7 @@ InChIKeyが多い場合、`# Chunk N`単位で連結される。
 ## ZIP内の出力
 
 ```text
-kgapp.zip
+msp_kg_result.zip
 ├── massbank_candidates_by_spectrum.csv
 ├── spectrum_inchikey_annotations.csv
 ├── massbank_record_summary.csv
@@ -511,6 +581,11 @@ kgapp.zip
 | `precursor_type` | MassBank側precursor type |
 | `ion_mode` | MassBank側ion mode |
 | `selected_for_kg` | KG検索へ採用した候補か |
+| `massbank_similarity_rank` | 候補InChIKeyの類似度順位 |
+| `kg_metadata_count` | kg.sqlite3に事前集計したmetadata総数 |
+| `kg_metadata_rank` | 候補内のKG metadata順位 |
+| `combined_rank_sum` | 類似度順位とKG順位の合計 |
+| `combined_rank` | rank sumに基づく最終順位 |
 
 ## `spectrum_inchikey_annotations.csv`
 
@@ -615,6 +690,7 @@ KG検索結果をInChIKey単位に統合したJSONである。
 - MassBank top N
 - m/z tolerance
 - minimum matched peaks
+- minimum cosine similarity
 - precursor tolerance
 - Max MassBank InChIKey for KG
 - short InChIKey使用有無
@@ -628,7 +704,6 @@ result ZIPを入力画面へドラッグして設定を復元するための機�
 {
   "schema_version": 1,
   "workflow": "msp_kg",
-  "output_name": "kgapp",
   "files": [
     {
       "file_name": "PR_01.msp",
@@ -639,6 +714,7 @@ result ZIPを入力画面へドラッグして設定を復元するための機�
     "top_n": 10,
     "mz_tolerance": 0.01,
     "min_matched_peaks": 1,
+    "minimum_similarity": 0.5,
     "use_precursor_mz": true,
     "precursor_mz_column": "PRECURSORMZ",
     "precursor_tolerance": 0.01,
@@ -700,6 +776,24 @@ match、クラス内再現性を合わせて解釈する必要がある。
   スペクトル数を独立観測として扱うことが適切か確認する。
 - short InChIKey検索では立体異性体などの情報が混ざる可能性がある。
 - KGに情報がないことは、生物学的意味がないことを意味しない。
+
+## KG metadata scoreの再構築
+
+`kg.sqlite3`を更新した場合、通常のKG import処理は古い
+`kg_metadata_scores`を無効化する。次回workflow実行時に自動生成される。
+
+事前に明示的に再構築する場合：
+
+```bash
+cd /workspaces/MassbankRdf/mnt/app
+python data/db/build_kg_metadata_scores.py
+```
+
+別のKG databaseを指定する場合：
+
+```bash
+python data/db/build_kg_metadata_scores.py --db /path/to/kg.sqlite3
+```
 
 ## 実装ファイル
 

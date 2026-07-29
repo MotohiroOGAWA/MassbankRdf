@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import re
 from typing import Any
 import zipfile
 
@@ -12,6 +11,9 @@ import pandas as pd
 from massbank_rdf.db.massbank.database import MassBankDatabase
 from massbank_rdf.gui.session_store import TemporarySessionStore
 from massbank_rdf.gui.workflows.shared.llm_config_panel import build_llm_config
+from massbank_rdf.gui.workflows.shared.candidate_ranking_panel import (
+    create_minimum_similarity_input,
+)
 from massbank_rdf.models import MSPRecord
 from massbank_rdf.services.kg.common import normalize_inchikey_values
 
@@ -168,7 +170,7 @@ def inspect_uploaded_msps(
         rows.append(
             {
                 "file_name": path.name,
-                "sample_class": "",
+                "sample_class": path.name,
                 "records": record_count,
                 "readable": len(records),
                 "skipped": skipped_count,
@@ -189,27 +191,16 @@ def inspect_uploaded_msps(
     return status, pd.DataFrame(rows)
 
 
-def validate_output_name(value: str) -> str:
-    """Derive a safe download folder name from a client-side path or name."""
-    if not value or not value.strip():
-        raise ValueError("Output name is required.")
-    name = value.strip().replace("\\", "/").rstrip("/").split("/")[-1]
-    name = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._")
-    if not name:
-        raise ValueError("Output name is invalid.")
-    return name
-
-
 def load_workflow_config_from_zip(
     archive_path: str | None,
     current_file_classes: pd.DataFrame,
 ) -> tuple[
     str,
     pd.DataFrame,
-    str,
     int,
     float,
     int,
+    float,
     bool,
     str,
     float,
@@ -252,10 +243,10 @@ def load_workflow_config_from_zip(
             "API credentials were not imported."
         ),
         class_df,
-        str(config.get("output_name", "kgapp")),
         int(search.get("top_n", 10)),
         float(search.get("mz_tolerance", 0.01)),
         int(search.get("min_matched_peaks", 1)),
+        float(search.get("minimum_similarity", 0.5)),
         bool(search.get("use_precursor_mz", True)),
         str(search.get("precursor_mz_column", "PRECURSORMZ")),
         float(search.get("precursor_tolerance", 0.01)),
@@ -379,11 +370,11 @@ def create_app(
     def _run(
         msp_files: list[str] | None,
         file_classes: pd.DataFrame,
-        output_directory: str,
         resume_enabled: bool,
         top_n: int,
         mz_tolerance: float,
         min_matched_peaks: int,
+        minimum_similarity: float,
         use_precursor_mz: bool,
         precursor_mz_column: str,
         precursor_tolerance: float | None,
@@ -410,13 +401,18 @@ def create_app(
             file_names = [Path(path).name for path in msp_files]
             if len(file_names) != len(set(file_names)):
                 raise ValueError("Uploaded MSP file names must be unique.")
-            output_name = validate_output_name(output_directory)
             class_df = pd.DataFrame(file_classes)
             if len(class_df) != len(msp_files) or "sample_class" not in class_df:
                 raise ValueError("The file/class table does not match uploaded files.")
             classes = class_df["sample_class"].fillna("").astype(str).str.strip()
-            if (classes == "").any():
-                raise ValueError("Sample class is required for every MSP file.")
+            classes = pd.Series(
+                [
+                    sample_class or file_name
+                    for sample_class, file_name in zip(classes, file_names)
+                ],
+                index=classes.index,
+                dtype=str,
+            )
             if use_precursor_mz and not str(precursor_mz_column).strip():
                 raise ValueError("Precursor m/z column name is required.")
             if use_ion_mode and not str(ion_mode_column).strip():
@@ -461,11 +457,11 @@ def create_app(
         payload = {
             "msp_batch_job": {
                 "documents": documents,
-                "output_name": output_name,
                 "resume_enabled": bool(resume_enabled),
                 "top_n": int(top_n),
                 "mz_tolerance": float(mz_tolerance),
                 "min_matched_peaks": int(min_matched_peaks),
+                "minimum_similarity": float(minimum_similarity),
                 "use_precursor_mz": bool(use_precursor_mz),
                 "precursor_mz_column": str(precursor_mz_column).strip(),
                 "precursor_tolerance": precursor_tolerance,
@@ -486,6 +482,7 @@ def create_app(
                 "top_n": int(top_n),
                 "mz_tolerance": float(mz_tolerance),
                 "min_matched_peaks": int(min_matched_peaks),
+                "minimum_similarity": float(minimum_similarity),
                 "use_precursor_mz": bool(use_precursor_mz),
                 "precursor_mz_column": str(precursor_mz_column).strip(),
                 "precursor_tolerance": (
@@ -557,26 +554,21 @@ def create_app(
                 interactive=False,
                 lines=2,
             )
-            with gr.Row():
-                output_directory = gr.Textbox(
-                    label="Download folder/archive name (required)",
-                    placeholder="kgapp",
-                    info=(
-                        "Results are downloaded as a ZIP to this browser. "
-                        "A Windows path may be pasted; its final folder name is used."
-                    ),
-                )
-                resume_enabled = gr.Checkbox(
-                    label="Resume from checkpoint",
-                    value=False,
-                    info="Continue a compatible interrupted run in the output directory.",
-                )
+            resume_enabled = gr.Checkbox(
+                label="Resume from checkpoint",
+                value=False,
+                info=(
+                    "Continue a compatible interrupted run from this server's "
+                    "checkpoint. A result ZIP restores settings, not computation."
+                ),
+            )
 
             gr.HTML("<h3>MassBank and KG conditions</h3>")
             with gr.Row():
                 top_n = gr.Number(label="MassBank top N", value=10, precision=0, minimum=1)
                 mz_tolerance = gr.Number(label="m/z tolerance", value=0.01, minimum=0)
                 min_matched_peaks = gr.Number(label="Min matched peaks", value=1, precision=0, minimum=1)
+                minimum_similarity = create_minimum_similarity_input()
             with gr.Row():
                 use_precursor_mz = gr.Checkbox(
                     label="Use precursor m/z filter",
@@ -660,10 +652,10 @@ def create_app(
                 outputs=[
                     config_status,
                     file_classes,
-                    output_directory,
                     top_n,
                     mz_tolerance,
                     min_matched_peaks,
+                    minimum_similarity,
                     use_precursor_mz,
                     precursor_mz_column,
                     precursor_tolerance,
@@ -676,8 +668,9 @@ def create_app(
             run_button.click(
                 fn=_run,
                 inputs=[
-                    msp_files, file_classes, output_directory, resume_enabled,
+                    msp_files, file_classes, resume_enabled,
                     top_n, mz_tolerance, min_matched_peaks,
+                    minimum_similarity,
                     use_precursor_mz, precursor_mz_column, precursor_tolerance,
                     use_ion_mode, ion_mode_column,
                     max_massbank_inchikey, use_short_inchikey,

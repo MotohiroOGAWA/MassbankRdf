@@ -11,6 +11,7 @@ from ..shared.llm_config_panel import (
     build_llm_config,
     create_llm_config_panel,
 )
+from ..shared.candidate_ranking_panel import create_minimum_similarity_input
 from ....services.common_peak_annotation.common_peak_annotator import (
     normalize_optional_positive_int,
 )
@@ -99,6 +100,7 @@ def _load_example_common_peak_values() -> tuple[
     int | None,
     int,
     int,
+    float,
     str,
 ]:
     """Return example values for Gradio input components."""
@@ -118,6 +120,7 @@ def _load_example_common_peak_values() -> tuple[
         data.get("max_massbank_inchikey", None),
         int(data.get("massbank_top_n", 50)),
         int(data.get("min_matched_peaks", 1)),
+        float(data.get("minimum_similarity", 0.5)),
         str(data.get("ion_mode", "")),
     )
 
@@ -214,6 +217,7 @@ def create_app(
         max_massbank_inchikey: int | float | None,
         massbank_top_n: int,
         min_matched_peaks: int,
+        minimum_similarity: float,
         ion_mode: str,
         llm_enabled: bool,
         llm_output_language: str,
@@ -253,6 +257,7 @@ def create_app(
                 ),
                 "massbank_top_n": int(massbank_top_n),
                 "min_matched_peaks": int(min_matched_peaks),
+                "minimum_similarity": float(minimum_similarity),
                 "ion_mode": normalized_ion_mode or "-",
             },
             "llm_config": build_llm_config(
@@ -357,6 +362,8 @@ def create_app(
                     minimum=1,
                 )
 
+                minimum_similarity = create_minimum_similarity_input()
+
                 ion_mode = gr.Dropdown(
                     label="Ion mode",
                     choices=[
@@ -389,6 +396,7 @@ def create_app(
                     max_massbank_inchikey,
                     massbank_top_n,
                     min_matched_peaks,
+                    minimum_similarity,
                     ion_mode,
                 ],
             )
@@ -402,6 +410,7 @@ def create_app(
                     max_massbank_inchikey,
                     massbank_top_n,
                     min_matched_peaks,
+                    minimum_similarity,
                     ion_mode,
                     *llm_config_components.inputs,
                 ],

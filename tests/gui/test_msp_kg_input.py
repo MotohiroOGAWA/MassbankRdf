@@ -17,7 +17,6 @@ from massbank_rdf.gui.workflows.msp_kg.input_page import (
     load_workflow_config_from_zip,
     parse_msp_records,
     read_msp_input,
-    validate_output_name,
 )
 
 
@@ -132,22 +131,9 @@ class TestMspKgInput(unittest.TestCase):
         self.assertIn("# Chunk 1\nSELECT first", queries["pubchem_compound"])
         self.assertIn("# Chunk 2\nSELECT second", queries["pubchem_compound"])
 
-    def test_windows_output_path_becomes_download_name(self) -> None:
-        self.assertEqual(
-            validate_output_name(
-                r"D:\WorkSpace\MetaboLights\MTBLS9074\result_pos\kgapp"
-            ),
-            "kgapp",
-        )
-
-    def test_output_name_is_required(self) -> None:
-        with self.assertRaisesRegex(ValueError, "required"):
-            validate_output_name("")
-
     def test_result_zip_restores_settings_and_matching_classes(self) -> None:
         config = {
             "schema_version": 1,
-            "output_name": "restored",
             "files": [
                 {"file_name": "a.msp", "sample_class": "PR"},
                 {"file_name": "missing.msp", "sample_class": "WT"},
@@ -156,6 +142,7 @@ class TestMspKgInput(unittest.TestCase):
                 "top_n": 5,
                 "mz_tolerance": 0.02,
                 "min_matched_peaks": 3,
+                "minimum_similarity": 0.6,
                 "use_precursor_mz": False,
                 "precursor_mz_column": "PRECURSOR_M/Z",
                 "precursor_tolerance": 0.5,
@@ -186,7 +173,7 @@ class TestMspKgInput(unittest.TestCase):
         self.assertEqual(loaded[1].loc[0, "sample_class"], "PR")
         self.assertEqual(loaded[1].loc[1, "sample_class"], "Control")
         self.assertEqual(loaded[2:], (
-            "restored", 5, 0.02, 3, False, "PRECURSOR_M/Z", 0.5,
+            5, 0.02, 3, 0.6, False, "PRECURSOR_M/Z", 0.5,
             True, "POLARITY", 2, True,
         ))
 

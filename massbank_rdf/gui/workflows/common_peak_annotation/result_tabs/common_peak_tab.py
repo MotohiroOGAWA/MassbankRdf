@@ -163,6 +163,7 @@ def _format_common_peak_status(
         f"Common peak N: {summary.get('common_peak_n', '-')}\n"
         f"Max MassBank InChIKey: {summary.get('max_massbank_inchikey', '-')}\n"
         f"MassBank top N: {summary.get('massbank_top_n', '-')}\n"
+        f"Minimum cosine similarity: {summary.get('minimum_similarity', '-')}\n"
         f"Min matched peaks: {summary.get('min_matched_peaks', '-')}\n"
         f"Ion mode: {summary.get('ion_mode', '-')}"
     )

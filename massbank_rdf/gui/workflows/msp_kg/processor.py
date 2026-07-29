@@ -13,10 +13,15 @@ import pandas as pd
 
 from massbank_rdf.db.massbank.database import MassBankDatabase
 from massbank_rdf.gui.session_store import TemporarySessionStore
+from massbank_rdf.services.kg.candidate_ranking import (
+    filter_similarity_candidates,
+    rank_grouped_candidates_with_kg_metadata,
+)
 from massbank_rdf.services.kg.common import normalize_inchikey_values
+from massbank_rdf.services.kg.common import extract_inchikey_value
+from massbank_rdf.services.kg.metadata_score_service import KgMetadataScoreService
 
 from .input_page import (
-    _format_massbank_candidates,
     _merge_kg_evidence,
     _merge_kg_queries,
     _metadata_value,
@@ -35,6 +40,11 @@ def _job_signature(job: dict[str, Any]) -> str:
 def _aggregate_massbank(candidate_df: pd.DataFrame) -> pd.DataFrame:
     if candidate_df.empty:
         return pd.DataFrame()
+    candidate_df = candidate_df.copy()
+    if "kg_metadata_count" not in candidate_df:
+        candidate_df["kg_metadata_count"] = 0
+    if "combined_rank_sum" not in candidate_df:
+        candidate_df["combined_rank_sum"] = pd.NA
     group_columns = [
         column
         for column in ["accession_id", "inchikey", "name", "formula", "smiles"]
@@ -46,6 +56,8 @@ def _aggregate_massbank(candidate_df: pd.DataFrame) -> pd.DataFrame:
         assigned_file_count=("source_file", "nunique"),
         best_score=("score", "max"),
         mean_score=("score", "mean"),
+        kg_metadata_count=("kg_metadata_count", "max"),
+        best_combined_rank_sum=("combined_rank_sum", "min"),
     ).reset_index()
     class_values = grouped["sample_class"].agg(
         lambda values: ", ".join(sorted(set(map(str, values))))
@@ -188,9 +200,7 @@ def build_batch_processor(
         job = payload.get("msp_batch_job")
         if not isinstance(job, dict):
             raise gr.Error("MSP batch settings were not found.")
-        output_name = str(job.get("output_name", "")).strip()
-        if not output_name:
-            raise gr.Error("Output name is required.")
+        output_name = "msp_kg_result"
         job_root = (
             Path(tempfile.gettempdir())
             / "massbank_rdf_msp_jobs"
@@ -225,10 +235,9 @@ def build_batch_processor(
         signature = _job_signature(job)
         state = {
             "signature": signature,
+            "checkpoint_version": 2,
             "next_index": 0,
-            "candidate_parts": [],
-            "annotations": [],
-            "all_inchikeys": [],
+            "raw_hits": [],
             "kg_next_chunk": 0,
             "evidence_parts": [],
             "query_parts": [],
@@ -238,9 +247,14 @@ def build_batch_processor(
                 loaded = pickle.load(handle)
             if loaded.get("signature") != signature:
                 raise gr.Error("Checkpoint settings do not match the current run.")
+            if loaded.get("checkpoint_version") != 2:
+                raise gr.Error(
+                    "Checkpoint format is outdated. Start a new run without resume."
+                )
             state = loaded
 
         db = MassBankDatabase()
+        kg_score_service = KgMetadataScoreService()
         max_kg = job.get("max_massbank_inchikey")
         for task_index in range(int(state["next_index"]), len(tasks)):
             file_name, sample_class, file_record_index, record = tasks[task_index]
@@ -282,36 +296,110 @@ def build_batch_processor(
                     else None
                 ),
             )
-            candidates = _format_massbank_candidates(
-                db,
+            raw = filter_similarity_candidates(
                 raw,
-                spectrum_index=task_index + 1,
-                record=record,
+                float(job.get("minimum_similarity", 0.5)),
+                score_column="cosine_score",
             )
-            spectrum_uid = f"{file_name}::{file_record_index}"
-            if not candidates.empty:
-                candidates.insert(0, "spectrum_uid", spectrum_uid)
-                candidates.insert(1, "source_file", file_name)
-                candidates.insert(2, "sample_class", sample_class)
-                candidates.insert(3, "file_record_index", file_record_index)
-                keys = normalize_inchikey_values(
-                    candidates["inchikey"].dropna().astype(str).tolist()
-                )
-            else:
-                keys = []
-            annotated = keys[: int(max_kg)] if max_kg is not None else keys
-            if not candidates.empty:
-                selected = set(annotated)
-                candidates["selected_for_kg"] = [
-                    bool(key and key[0] in selected)
-                    for key in (
-                        normalize_inchikey_values([str(value)])
-                        for value in candidates["inchikey"]
+            for candidate_rank, hit in enumerate(
+                raw.itertuples(index=False),
+                start=1,
+            ):
+                state["raw_hits"].append(
+                    (
+                        task_index,
+                        int(hit.id),
+                        float(hit.cosine_score),
+                        int(hit.matched_peak_count),
+                        candidate_rank,
                     )
-                ]
-                state["candidate_parts"].append(candidates)
-            state["all_inchikeys"].extend(annotated)
-            state["annotations"].append(
+                )
+            state["next_index"] = task_index + 1
+            if state["next_index"] % 25 == 0 or state["next_index"] == len(tasks):
+                with checkpoint_path.open("wb") as handle:
+                    pickle.dump(state, handle)
+
+        raw_hits_df = pd.DataFrame(
+            state["raw_hits"],
+            columns=[
+                "task_index",
+                "id",
+                "score",
+                "match",
+                "candidate_rank",
+            ],
+        )
+        if raw_hits_df.empty:
+            candidate_df = pd.DataFrame()
+        else:
+            record_ids = raw_hits_df["id"].drop_duplicates().astype(int).tolist()
+            record_df = db.get_records_by_ids_dataframe(record_ids)
+            candidate_df = raw_hits_df.merge(record_df, on="id", how="left")
+            candidate_df = candidate_df.drop(columns=["id"], errors="ignore")
+            task_metadata = []
+            for task_index, (
+                file_name,
+                sample_class,
+                file_record_index,
+                record,
+            ) in enumerate(tasks):
+                task_metadata.append(
+                    {
+                        "task_index": task_index,
+                        "spectrum_uid": f"{file_name}::{file_record_index}",
+                        "source_file": file_name,
+                        "sample_class": sample_class,
+                        "file_record_index": file_record_index,
+                        "msp_record_index": task_index + 1,
+                        "msp_name": _metadata_value(record, "Name") or "",
+                    }
+                )
+            candidate_df = candidate_df.merge(
+                pd.DataFrame(task_metadata),
+                on="task_index",
+                how="left",
+            ).drop(columns=["task_index"])
+            candidate_df = rank_grouped_candidates_with_kg_metadata(
+                candidate_df,
+                kg_score_service,
+                group_column="spectrum_uid",
+            )
+
+        annotations: list[dict[str, Any]] = []
+        all_inchikeys: list[str] = []
+        selected_pairs: set[tuple[str, str]] = set()
+        grouped_candidates = (
+            {
+                str(uid): group
+                for uid, group in candidate_df.groupby(
+                    "spectrum_uid",
+                    sort=False,
+                )
+            }
+            if not candidate_df.empty
+            else {}
+        )
+        for task_index, (
+            file_name,
+            sample_class,
+            file_record_index,
+            record,
+        ) in enumerate(tasks):
+            spectrum_uid = f"{file_name}::{file_record_index}"
+            group = grouped_candidates.get(spectrum_uid, pd.DataFrame())
+            keys = (
+                normalize_inchikey_values(
+                    group["inchikey"].dropna().astype(str).tolist()
+                )
+                if not group.empty and "inchikey" in group
+                else []
+            )
+            annotated = keys[: int(max_kg)] if max_kg is not None else keys
+            all_inchikeys.extend(annotated)
+            selected_pairs.update(
+                (spectrum_uid, inchikey) for inchikey in annotated
+            )
+            annotations.append(
                 {
                     "spectrum_uid": spectrum_uid,
                     "source_file": file_name,
@@ -319,23 +407,23 @@ def build_batch_processor(
                     "file_record_index": file_record_index,
                     "msp_name": _metadata_value(record, "Name") or "",
                     "peak_count": int(record.peaks.shape[0]),
-                    "massbank_hit_count": len(candidates),
+                    "massbank_hit_count": len(group),
                     "annotated_inchikey_count": len(annotated),
                     "annotated_inchikeys": ", ".join(annotated),
                 }
             )
-            state["next_index"] = task_index + 1
-            if state["next_index"] % 25 == 0 or state["next_index"] == len(tasks):
-                with checkpoint_path.open("wb") as handle:
-                    pickle.dump(state, handle)
 
-        candidate_df = (
-            pd.concat(state["candidate_parts"], ignore_index=True)
-            if state["candidate_parts"]
-            else pd.DataFrame()
-        )
-        annotation_df = pd.DataFrame(state["annotations"])
-        unique_keys = normalize_inchikey_values(state["all_inchikeys"])
+        if not candidate_df.empty:
+            candidate_df["selected_for_kg"] = [
+                (str(spectrum_uid), extract_inchikey_value(inchikey))
+                in selected_pairs
+                for spectrum_uid, inchikey in zip(
+                    candidate_df["spectrum_uid"],
+                    candidate_df["inchikey"],
+                )
+            ]
+        annotation_df = pd.DataFrame(annotations)
+        unique_keys = normalize_inchikey_values(all_inchikeys)
         evidence_parts: list[dict[str, Any]] = state.setdefault(
             "evidence_parts", []
         )
@@ -382,7 +470,6 @@ def build_batch_processor(
         workflow_config = {
             "schema_version": 1,
             "workflow": "msp_kg",
-            "output_name": output_name,
             "files": [
                 {
                     "file_name": str(document.get("file_name", "")),
@@ -396,6 +483,7 @@ def build_batch_processor(
                     "top_n",
                     "mz_tolerance",
                     "min_matched_peaks",
+                    "minimum_similarity",
                     "use_precursor_mz",
                     "precursor_mz_column",
                     "precursor_tolerance",
