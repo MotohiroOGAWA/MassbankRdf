@@ -99,11 +99,10 @@ MassBank検索では25スペクトルごと、KG検索では1チャンクごと�
 含めないため、result ZIPのドラッグ操作だけで計算途中から再開することは
 できない。
 
-### Load settings from previous result ZIP
+### Previous MSP result ZIP
 
 以前のresult ZIPを入力画面へドラッグすると、ZIP内の
-`workflow_config.json`から検索設定を復元する。この操作は入力設定の復元で
-あり、MassBank検索やKG検索の計算状態は復元しない。
+`workflow_config.json`から検索設定を復元する。
 
 復元対象：
 
@@ -123,8 +122,50 @@ MassBank検索では25スペクトルごと、KG検索では1チャンクごと�
 一致した場合、その行の`sample_class`も復元する。一致しないファイルの
 クラスは変更しない。
 
+`Open completed result ZIP`を押すと、完成済みZIPから次を読み込んで
+resultページへ直接移動する。
+
+- スペクトルごとのMassBank候補
+- スペクトルごとのInChIKey annotation
+- MassBank record集約結果
+- class別KG解析
+- KG evidence
+- 実行済みSPARQL
+- summaryとworkflow設定
+
+この経路では`kg_precomputed=True`としてセッションを作るため、
+MassBankスペクトル検索とKG検索は実行しない。MSPファイルを再アップロード
+する必要もない。MassBank、SPARQL、KG、Class Analysis、Output、
+`Ask your results`の各タブはZIP内の保存結果を使用する。
+
+これは完成済み結果の再表示・対話解析であり、計算途中のZIPから検索を再開
+する機能ではない。計算途中の再開にはサーバー側の
+`Resume from checkpoint`を使用する。
+
 Azure OpenAI API keyなどの認証情報は、安全のためZIPへ保存せず、
-インポートもしない。
+インポートもしない。インポートした結果でチャットを使用する場合は、
+入力画面でLLMを有効にして認証情報を再入力してから
+`Open completed result ZIP`を押す。
+
+### LLM settings upload / download
+
+LLM設定欄の`Download LLM settings`を押すと、次の設定を
+`llm_settings.json`としてダウンロードする。
+
+- interactive result chatの有効・無効
+- output language
+- Azure OpenAI endpoint
+- deployment
+- API version
+- API key
+- sample origin / context
+
+ダウンロードした設定ファイルを`Upload LLM settings`へドラッグすると、
+各入力欄を復元する。
+
+API keyも設定ファイルへ保存し、アップロード時に復元する。API keyは
+暗号化されず平文で保存されるため、設定ファイルを安全な場所に保管し、
+共有ZIPやGitへ含めない。
 
 ## MassBank検索条件
 
@@ -532,9 +573,45 @@ InChIKeyが多い場合、`# Chunk N`単位で連結される。
 
 ### Interpretationタブ
 
-既存のLLM Interpretation機能を表示する。LLMを無効にした場合は
-解釈を実行しない。現段階では複数ファイル・クラス専用のLLM比較処理は
-追加していない。
+MSP workflowでは、トークン消費を抑えるため全KG featureの自動LLM
+Interpretationを実行しない。入力画面の`Enable interactive result chat`
+を有効にすると、次の`Ask your results`タブから必要な根拠だけを検索して
+LLMへ渡す。
+
+### Ask your resultsタブ
+
+現在の解析結果について会話形式で質問する。例：
+
+```text
+Are any candidates associated with Alzheimer's disease observed in these results?
+Among them, show the spectra associated with the PR class.
+Which KG metadata supports this answer?
+```
+
+質問に対して、LLMより先に決定論的な検索を行う。
+
+1. 疾患名、pathway名、class、MassBank accession、InChIKeyなどを抽出する
+2. `kg_evidence`とスペクトルごとのMassBank候補から一致行を取得する
+3. InChIKeyを介してKG featureと入力スペクトルを結合する
+4. 抽出した根拠だけをAzure OpenAIへ渡す
+5. 回答と根拠表を表示する
+
+追質問では直前の回答で抽出したInChIKey範囲を維持する。LLMには、
+入力スペクトルの観測、MassBank類似候補、KG associationを区別し、
+候補を確定同定として表現しないよう指示する。
+
+次の場合はAzure OpenAIを呼び出さずに拒否する。
+
+- 質問が500文字を超える
+- 全結果の網羅的解析など、全データ投入を要求する
+- 一致するKG featureが20件を超える
+- 一致するMassBank候補行が60件を超える
+- LLMへ渡す根拠JSONが30,000文字を超える
+- 検索対象となる具体的な語を決定論的に抽出できない
+
+回答には直近4メッセージだけを会話文脈として使用し、その文字数も
+6,000文字に制限する。LLMの回答上限は800 tokenである。一致する根拠が
+ない場合はLLMを呼び出さず、「この結果では確認できない」と表示する。
 
 ## ZIP内の出力
 
@@ -802,6 +879,7 @@ python data/db/build_kg_metadata_scores.py --db /path/to/kg.sqlite3
 msp_kg/
 ├── input_page.py   # 複数ファイル入力、クラス表、条件検証
 ├── processor.py    # MassBank/KGバッチ処理、統計、保存、再開
+├── result_chat_tab.py # 根拠制限付き対話UI
 ├── page.py         # Home画面のworkflow項目
 ├── __init__.py
 └── README.md

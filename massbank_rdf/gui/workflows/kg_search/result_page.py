@@ -21,6 +21,10 @@ from massbank_rdf.gui.workflows.kg_search.result_tabs.interpretation_tab import 
     build_interpretation_loader,
     create_interpretation_tab,
 )
+from massbank_rdf.gui.workflows.msp_kg.result_chat_tab import (
+    build_result_chat_handler,
+    create_result_chat_tab,
+)
 
 def format_search_summary(payload: dict[str, Any]) -> str:
     """Format search condition summary."""
@@ -205,6 +209,15 @@ def create_app(
         session_store,
         session_cookie_name=session_cookie_name,
     )
+    is_msp_workflow = session_cookie_name == "msp_kg_session_id"
+    ask_result = (
+        build_result_chat_handler(
+            session_store,
+            session_cookie_name=session_cookie_name,
+        )
+        if is_msp_workflow
+        else None
+    )
 
     with gr.Blocks(title=f"{workflow_title} - Result") as app:
         with gr.Group(elem_classes="massbank-page massbank-kg-result-page"):
@@ -285,6 +298,18 @@ def create_app(
                         interpretation_json_file,
                     ) = create_interpretation_tab()
 
+                if is_msp_workflow:
+                    with gr.Tab("Ask your results", id="result-chat"):
+                        (
+                            result_chatbot,
+                            result_question,
+                            result_send,
+                            result_clear,
+                            result_chat_status,
+                            result_chat_evidence,
+                            result_chat_scope,
+                        ) = create_result_chat_tab()
+
             gr.HTML(
                 """
                 <div class="massbank-demo-box">
@@ -303,7 +328,7 @@ def create_app(
                 outputs=progress_text,
             )
 
-            load_event.then(
+            result_load_event = load_event.then(
                 fn=load_search_summary,
                 inputs=[],
                 outputs=summary_text,
@@ -358,19 +383,68 @@ def create_app(
                 fn=lambda: "KG result loaded. Running LLM interpretation...",
                 inputs=[],
                 outputs=progress_text,
-            ).then(
-                fn=load_interpretation_result,
-                inputs=[],
-                outputs=[
-                    interpretation_status_text,
-                    interpretation_json,
-                    interpretation_json_file,
-                    result_tabs,
-                ],
-            ).then(
-                fn=lambda: "Finished.",
-                inputs=[],
-                outputs=progress_text,
             )
+
+            if is_msp_workflow:
+                result_load_event.then(
+                    fn=lambda: (
+                        "Interactive result chat is ready. Automatic full-result "
+                        "LLM interpretation is skipped to limit token usage."
+                    ),
+                    inputs=[],
+                    outputs=interpretation_status_text,
+                ).then(
+                    fn=lambda: "Finished.",
+                    inputs=[],
+                    outputs=progress_text,
+                )
+                result_send.click(
+                    fn=ask_result,
+                    inputs=[result_question, result_chatbot, result_chat_scope],
+                    outputs=[
+                        result_chatbot,
+                        result_question,
+                        result_chat_status,
+                        result_chat_evidence,
+                        result_chat_scope,
+                    ],
+                )
+                result_question.submit(
+                    fn=ask_result,
+                    inputs=[result_question, result_chatbot, result_chat_scope],
+                    outputs=[
+                        result_chatbot,
+                        result_question,
+                        result_chat_status,
+                        result_chat_evidence,
+                        result_chat_scope,
+                    ],
+                )
+                result_clear.click(
+                    fn=lambda: ([], "", "", [], []),
+                    inputs=[],
+                    outputs=[
+                        result_chatbot,
+                        result_question,
+                        result_chat_status,
+                        result_chat_evidence,
+                        result_chat_scope,
+                    ],
+                )
+            else:
+                result_load_event.then(
+                    fn=load_interpretation_result,
+                    inputs=[],
+                    outputs=[
+                        interpretation_status_text,
+                        interpretation_json,
+                        interpretation_json_file,
+                        result_tabs,
+                    ],
+                ).then(
+                    fn=lambda: "Finished.",
+                    inputs=[],
+                    outputs=progress_text,
+                )
 
     return app

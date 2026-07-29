@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
+import shutil
+import tempfile
 from typing import Any
 import zipfile
 
@@ -204,6 +207,202 @@ def assign_default_sample_classes(values: pd.Series) -> pd.Series:
     )
 
 
+RESULT_ZIP_FILES = {
+    "massbank_candidates_by_spectrum.csv",
+    "spectrum_inchikey_annotations.csv",
+    "massbank_record_summary.csv",
+    "class_inchikey_kg_analysis.csv",
+    "kg_evidence.json",
+    "summary.json",
+    "workflow_config.json",
+}
+MAX_RESULT_ZIP_UNCOMPRESSED_BYTES = 500 * 1024 * 1024
+LLM_SETTINGS_SCHEMA_VERSION = 1
+MAX_LLM_SETTINGS_BYTES = 100 * 1024
+
+
+def write_llm_settings_file(
+    *,
+    enabled: bool,
+    output_language: str,
+    endpoint: str,
+    deployment: str,
+    api_version: str,
+    api_key: str,
+    user_context: str,
+) -> str:
+    """Write reusable LLM settings including the Azure OpenAI API key."""
+    settings = {
+        "schema_version": LLM_SETTINGS_SCHEMA_VERSION,
+        "type": "massbank_rdf_llm_settings",
+        "provider": "azure_openai",
+        "enabled": bool(enabled),
+        "output_language": output_language or "English",
+        "endpoint": (endpoint or "").strip(),
+        "deployment": (deployment or "").strip(),
+        "api_version": (api_version or "2024-10-21").strip(),
+        "api_key": api_key or "",
+        "user_context": user_context or "",
+        "api_key_included": True,
+    }
+    output_dir = Path(tempfile.mkdtemp(prefix="massbank_rdf_llm_settings_"))
+    output_path = output_dir / "llm_settings.json"
+    output_path.write_text(
+        json.dumps(settings, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return str(output_path)
+
+
+def load_llm_settings_file(
+    settings_path: str | None,
+    current_api_key: str,
+) -> tuple[str, bool, str, str, str, str, str, str]:
+    """Restore LLM controls from a dragged settings JSON."""
+    if not settings_path:
+        raise gr.Error("Please upload an LLM settings JSON.")
+    path = Path(settings_path)
+    try:
+        if path.stat().st_size > MAX_LLM_SETTINGS_BYTES:
+            raise ValueError("The LLM settings file is larger than 100 KB.")
+        settings = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise gr.Error("The LLM settings JSON could not be read.") from exc
+    if not isinstance(settings, dict):
+        raise gr.Error("The LLM settings JSON must contain an object.")
+    if settings.get("type") != "massbank_rdf_llm_settings":
+        raise gr.Error("This is not a MassBank RDF LLM settings file.")
+    if settings.get("provider") != "azure_openai":
+        raise gr.Error("Only Azure OpenAI LLM settings are supported.")
+    if int(settings.get("schema_version", 0)) != LLM_SETTINGS_SCHEMA_VERSION:
+        raise gr.Error("The LLM settings schema version is not supported.")
+
+    return (
+        "LLM settings loaded, including the API key.",
+        bool(settings.get("enabled", False)),
+        str(settings.get("output_language", "English")),
+        str(settings.get("endpoint", "")),
+        str(settings.get("deployment", "")),
+        str(settings.get("api_version", "2024-10-21")),
+        str(settings.get("api_key", current_api_key or "")),
+        str(settings.get("user_context", "")),
+    )
+
+
+def _result_zip_members(
+    archive: zipfile.ZipFile,
+) -> dict[str, zipfile.ZipInfo]:
+    """Resolve required result files by basename without extracting the ZIP."""
+    total_size = sum(member.file_size for member in archive.infolist())
+    if total_size > MAX_RESULT_ZIP_UNCOMPRESSED_BYTES:
+        raise ValueError("The uncompressed result ZIP is larger than 500 MB.")
+
+    members: dict[str, zipfile.ZipInfo] = {}
+    for member in archive.infolist():
+        basename = Path(member.filename).name
+        if basename not in RESULT_ZIP_FILES and not (
+            basename.endswith(".sparql")
+            and "sparql" in Path(member.filename).parts
+        ):
+            continue
+        if basename in members:
+            raise ValueError(f"The result ZIP contains duplicate {basename} files.")
+        members[basename] = member
+
+    missing = sorted(RESULT_ZIP_FILES - set(members))
+    if missing:
+        raise ValueError(
+            "The result ZIP is incomplete. Missing: " + ", ".join(missing)
+        )
+    return members
+
+
+def load_result_payload_from_zip(archive_path: str) -> dict[str, Any]:
+    """Load a completed MSP/KG result ZIP into a result-session payload."""
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            members = _result_zip_members(archive)
+
+            def read_json(name: str) -> dict[str, Any]:
+                value = json.loads(archive.read(members[name]).decode("utf-8"))
+                if not isinstance(value, dict):
+                    raise ValueError(f"{name} must contain a JSON object.")
+                return value
+
+            def read_csv(name: str) -> pd.DataFrame:
+                try:
+                    return pd.read_csv(io.BytesIO(archive.read(members[name])))
+                except pd.errors.EmptyDataError:
+                    return pd.DataFrame()
+
+            workflow_config = read_json("workflow_config.json")
+            if workflow_config.get("workflow") != "msp_kg":
+                raise ValueError("The ZIP is not an MSP Knowledge Graph result.")
+            summary = read_json("summary.json")
+            kg_evidence = read_json("kg_evidence.json")
+            candidate_df = read_csv("massbank_candidates_by_spectrum.csv")
+            annotation_df = read_csv("spectrum_inchikey_annotations.csv")
+            aggregate_df = read_csv("massbank_record_summary.csv")
+            class_analysis_df = read_csv("class_inchikey_kg_analysis.csv")
+            queries = {
+                Path(member.filename).stem: archive.read(member).decode(
+                    "utf-8", errors="replace"
+                )
+                for basename, member in members.items()
+                if basename.endswith(".sparql")
+            }
+    except (
+        OSError,
+        json.JSONDecodeError,
+        pd.errors.ParserError,
+        UnicodeDecodeError,
+        zipfile.BadZipFile,
+    ) as exc:
+        raise ValueError("The result ZIP could not be read.") from exc
+
+    candidate_required = {
+        "spectrum_uid", "source_file", "sample_class", "inchikey",
+    }
+    annotation_required = {
+        "spectrum_uid", "source_file", "sample_class",
+    }
+    if not candidate_df.empty and not candidate_required.issubset(
+        candidate_df.columns
+    ):
+        raise ValueError(
+            "massbank_candidates_by_spectrum.csv has an incompatible schema."
+        )
+    if not annotation_required.issubset(annotation_df.columns):
+        raise ValueError(
+            "spectrum_inchikey_annotations.csv has an incompatible schema."
+        )
+    features = kg_evidence.get("features", [])
+    if not isinstance(features, list):
+        raise ValueError("kg_evidence.json has an incompatible schema.")
+    inchikeys = normalize_inchikey_values(
+        [
+            str(feature.get("inchikey", ""))
+            for feature in features
+            if isinstance(feature, dict)
+        ]
+    )
+    summary = dict(summary)
+    summary["workflow"] = "msp_kg"
+    summary["imported_result_zip"] = True
+    return {
+        "result_df": aggregate_df,
+        "massbank_detail_df": candidate_df,
+        "spectrum_annotation_df": annotation_df,
+        "class_analysis_df": class_analysis_df,
+        "kg_inchikeys": inchikeys,
+        "kg_evidence": kg_evidence,
+        "kg_queries": queries,
+        "kg_precomputed": True,
+        "summary": summary,
+        "workflow_config": workflow_config,
+    }
+
+
 def load_workflow_config_from_zip(
     archive_path: str | None,
     current_file_classes: pd.DataFrame,
@@ -380,6 +579,25 @@ def create_app(
     session_store: TemporarySessionStore,
     kg_lookup_service: Any | None = None,
 ) -> gr.Blocks:
+    def _download_llm_settings(
+        enabled: bool,
+        output_language: str,
+        endpoint: str,
+        deployment: str,
+        api_version: str,
+        api_key: str,
+        user_context: str,
+    ) -> str:
+        return write_llm_settings_file(
+            enabled=enabled,
+            output_language=output_language,
+            endpoint=endpoint,
+            deployment=deployment,
+            api_version=api_version,
+            api_key=api_key,
+            user_context=user_context,
+        )
+
     def _run(
         msp_files: list[str] | None,
         file_classes: pd.DataFrame,
@@ -515,6 +733,49 @@ def create_app(
         session_store.set(session_id, payload)
         return f"OK:{session_id}"
 
+    def _import_completed_result(
+        archive_path: str | None,
+        llm_enabled: bool,
+        llm_output_language: str,
+        azure_openai_endpoint: str,
+        azure_openai_deployment: str,
+        azure_openai_api_version: str,
+        azure_openai_api_key: str,
+        llm_user_context: str,
+        request: gr.Request,
+    ) -> str:
+        session_id = request.request.cookies.get("msp_kg_session_id")
+        if not session_id:
+            raise gr.Error("Session ID was not found. Please reload the page.")
+        if not archive_path:
+            raise gr.Error("Please upload a completed MSP result ZIP.")
+        try:
+            payload = load_result_payload_from_zip(archive_path)
+            job_root = (
+                Path(tempfile.gettempdir())
+                / "massbank_rdf_msp_jobs"
+                / str(session_id)
+            )
+            job_root.mkdir(parents=True, exist_ok=True)
+            saved_archive = job_root / "imported_msp_kg_result.zip"
+            shutil.copy2(archive_path, saved_archive)
+        except (OSError, ValueError) as exc:
+            raise gr.Error(str(exc)) from exc
+
+        payload["llm_config"] = build_llm_config(
+            enabled=llm_enabled,
+            output_language=llm_output_language,
+            azure_openai_endpoint=azure_openai_endpoint,
+            azure_openai_deployment=azure_openai_deployment,
+            azure_openai_api_version=azure_openai_api_version,
+            azure_openai_api_key=azure_openai_api_key,
+            user_context=llm_user_context,
+        )
+        payload["output_archive"] = str(saved_archive)
+        payload["output_directory"] = "Imported from result ZIP"
+        session_store.set(session_id, payload)
+        return f"OK:{session_id}"
+
     with gr.Blocks(title="MSP Knowledge Graph Annotation") as app:
         with gr.Group(elem_classes="massbank-page massbank-msp-kg-page"):
             gr.HTML(
@@ -552,14 +813,23 @@ def create_app(
                 wrap=True,
             )
             config_zip = gr.File(
-                label="Load settings from previous result ZIP",
+                label="Previous MSP result ZIP",
                 file_types=[".zip"],
                 type="filepath",
+            )
+            gr.Markdown(
+                "Restore its settings automatically, or click "
+                "**Open completed result ZIP** to view the saved result "
+                "without rerunning MassBank/KG searches."
             )
             config_status = gr.Textbox(
                 label="Configuration import status",
                 interactive=False,
                 lines=2,
+            )
+            import_result_button = gr.Button(
+                "Open completed result ZIP",
+                variant="secondary",
             )
             resume_enabled = gr.Checkbox(
                 label="Resume from checkpoint",
@@ -616,7 +886,10 @@ def create_app(
 
             gr.HTML("<h3>LLM Interpretation (optional)</h3>")
             with gr.Row():
-                llm_enabled = gr.Checkbox(label="Run LLM interpretation", value=False)
+                llm_enabled = gr.Checkbox(
+                    label="Enable interactive result chat",
+                    value=False,
+                )
                 llm_output_language = gr.Dropdown(
                     label="Output language",
                     choices=["English", "Japanese"],
@@ -631,6 +904,24 @@ def create_app(
                 )
                 azure_openai_api_key = gr.Textbox(label="Azure OpenAI API key", type="password")
             llm_user_context = gr.Textbox(label="Sample origin / context", lines=4)
+            with gr.Row():
+                llm_settings_upload = gr.File(
+                    label="Upload LLM settings",
+                    file_types=[".json"],
+                    type="filepath",
+                )
+                download_llm_settings = gr.DownloadButton(
+                    label="Download LLM settings",
+                    variant="secondary",
+                )
+            gr.Markdown(
+                "The downloaded settings include the API key in plain text. "
+                "Store the file securely."
+            )
+            llm_settings_status = gr.Textbox(
+                label="LLM settings status",
+                interactive=False,
+            )
 
             run_button = gr.Button("Run", elem_id="massbank-basic-search-button")
             status_box = gr.Textbox(visible=False)
@@ -672,6 +963,33 @@ def create_app(
                     use_short_inchikey,
                 ],
             )
+            llm_settings_upload.upload(
+                fn=load_llm_settings_file,
+                inputs=[llm_settings_upload, azure_openai_api_key],
+                outputs=[
+                    llm_settings_status,
+                    llm_enabled,
+                    llm_output_language,
+                    azure_openai_endpoint,
+                    azure_openai_deployment,
+                    azure_openai_api_version,
+                    azure_openai_api_key,
+                    llm_user_context,
+                ],
+            )
+            download_llm_settings.click(
+                fn=_download_llm_settings,
+                inputs=[
+                    llm_enabled,
+                    llm_output_language,
+                    azure_openai_endpoint,
+                    azure_openai_deployment,
+                    azure_openai_api_version,
+                    azure_openai_api_key,
+                    llm_user_context,
+                ],
+                outputs=download_llm_settings,
+            )
             run_button.click(
                 fn=_run,
                 inputs=[
@@ -684,6 +1002,30 @@ def create_app(
                     llm_enabled, llm_output_language, azure_openai_endpoint,
                     azure_openai_deployment, azure_openai_api_version,
                     azure_openai_api_key, llm_user_context,
+                ],
+                outputs=status_box,
+            ).then(
+                fn=None,
+                inputs=status_box,
+                outputs=[],
+                js="""(status) => {
+                    if (status && status.startsWith("OK:")) {
+                        const jobId = encodeURIComponent(status.slice(3));
+                        window.location.href = `/msp-kg/result/?job_id=${jobId}`;
+                    }
+                }""",
+            )
+            import_result_button.click(
+                fn=_import_completed_result,
+                inputs=[
+                    config_zip,
+                    llm_enabled,
+                    llm_output_language,
+                    azure_openai_endpoint,
+                    azure_openai_deployment,
+                    azure_openai_api_version,
+                    azure_openai_api_key,
+                    llm_user_context,
                 ],
                 outputs=status_box,
             ).then(

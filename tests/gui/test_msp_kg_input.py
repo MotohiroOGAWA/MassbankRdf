@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 import zipfile
@@ -16,10 +17,15 @@ from massbank_rdf.gui.workflows.msp_kg.input_page import (
     assign_default_sample_classes,
     inspect_uploaded_msp,
     inspect_uploaded_msps,
+    load_result_payload_from_zip,
+    load_llm_settings_file,
     load_workflow_config_from_zip,
     parse_msp_records,
     read_msp_input,
+    write_llm_settings_file,
 )
+from massbank_rdf.gui.session_store import TemporarySessionStore
+from massbank_rdf.gui.workflows.msp_kg.processor import build_batch_processor
 
 
 MSP_TEXT = """Name: Example
@@ -199,6 +205,133 @@ class TestMspKgInput(unittest.TestCase):
             True, "POLARITY", 2, True,
         ))
 
+    def test_completed_result_zip_restores_result_payload(self) -> None:
+        config = {
+            "schema_version": 1,
+            "workflow": "msp_kg",
+            "files": [{"file_name": "a.msp", "sample_class": "PR"}],
+            "search": {},
+        }
+        candidate = pd.DataFrame(
+            [
+                {
+                    "spectrum_uid": "a.msp::1",
+                    "source_file": "a.msp",
+                    "sample_class": "PR",
+                    "inchikey": "AAAAAAAAAAAAAA-BBBBBBBBBB-C",
+                    "accession_id": "MSBNK-TEST-0001",
+                    "score": 0.9,
+                }
+            ]
+        )
+        annotation = pd.DataFrame(
+            [
+                {
+                    "spectrum_uid": "a.msp::1",
+                    "source_file": "a.msp",
+                    "sample_class": "PR",
+                }
+            ]
+        )
+        kg_evidence = {
+            "metadata": {"feature_count": 1},
+            "features": [
+                {
+                    "inchikey": "AAAAAAAAAAAAAA-BBBBBBBBBB-C",
+                    "entities": {},
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            archive_path = Path(directory) / "result.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr("workflow_config.json", json.dumps(config))
+                archive.writestr(
+                    "summary.json",
+                    json.dumps({"workflow": "msp_kg", "record_count": 1}),
+                )
+                archive.writestr("kg_evidence.json", json.dumps(kg_evidence))
+                archive.writestr(
+                    "massbank_candidates_by_spectrum.csv",
+                    candidate.to_csv(index=False),
+                )
+                archive.writestr(
+                    "spectrum_inchikey_annotations.csv",
+                    annotation.to_csv(index=False),
+                )
+                archive.writestr(
+                    "massbank_record_summary.csv",
+                    candidate.to_csv(index=False),
+                )
+                archive.writestr(
+                    "class_inchikey_kg_analysis.csv",
+                    pd.DataFrame().to_csv(index=False),
+                )
+                archive.writestr("sparql/hmdb.sparql", "SELECT * WHERE {}")
+
+            payload = load_result_payload_from_zip(str(archive_path))
+
+        self.assertTrue(payload["kg_precomputed"])
+        self.assertEqual(len(payload["massbank_detail_df"]), 1)
+        self.assertEqual(payload["kg_inchikeys"], [
+            "AAAAAAAAAAAAAA-BBBBBBBBBB-C"
+        ])
+        self.assertEqual(payload["kg_queries"]["hmdb"], "SELECT * WHERE {}")
+        self.assertTrue(payload["summary"]["imported_result_zip"])
+
+    def test_incomplete_result_zip_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive_path = Path(directory) / "result.zip"
+            with zipfile.ZipFile(archive_path, "w") as archive:
+                archive.writestr(
+                    "workflow_config.json",
+                    json.dumps({"workflow": "msp_kg"}),
+                )
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                load_result_payload_from_zip(str(archive_path))
+
+    def test_imported_result_skips_massbank_and_kg_processing(self) -> None:
+        session_store = TemporarySessionStore()
+        session_store.set(
+            "imported-session",
+            {
+                "kg_precomputed": True,
+                "output_directory": "Imported from result ZIP",
+            },
+        )
+        kg_service = mock.Mock()
+        processor = build_batch_processor(session_store, kg_service)
+        request = SimpleNamespace(
+            request=SimpleNamespace(
+                cookies={"msp_kg_session_id": "imported-session"},
+                query_params={},
+            )
+        )
+
+        message = processor(request)
+
+        self.assertIn("already completed", message)
+        kg_service.assert_not_called()
+
+    def test_llm_settings_round_trip_includes_api_key(self) -> None:
+        path = write_llm_settings_file(
+            enabled=True,
+            output_language="English",
+            endpoint="https://example.openai.azure.com/",
+            deployment="chat-model",
+            api_version="2024-10-21",
+            api_key="saved-secret",
+            user_context="Test samples",
+        )
+        saved = json.loads(Path(path).read_text(encoding="utf-8"))
+        loaded = load_llm_settings_file(path, "current-secret")
+
+        self.assertEqual(saved["api_key"], "saved-secret")
+        self.assertEqual(loaded[1], True)
+        self.assertEqual(loaded[2], "English")
+        self.assertEqual(loaded[3], "https://example.openai.azure.com/")
+        self.assertEqual(loaded[6], "saved-secret")
+        self.assertEqual(loaded[7], "Test samples")
 
 if __name__ == "__main__":
     unittest.main()
