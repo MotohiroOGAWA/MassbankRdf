@@ -262,6 +262,22 @@ def create_app(
         values[-1] = gr.update()
         return tuple(values)
 
+    def verify_processing_completed(request: gr.Request) -> str:
+        session_id = (
+            request.request.cookies.get(session_cookie_name)
+            or request.request.query_params.get("job_id")
+        )
+        payload = session_store.get(session_id) if session_id else None
+        if not isinstance(payload, dict) or not payload.get("kg_precomputed"):
+            raise gr.Error(
+                "Batch processing is not complete. Result tabs were not loaded."
+            )
+        if is_msp_workflow and not payload.get("output_archive"):
+            raise gr.Error(
+                "Batch processing finished without an output archive."
+            )
+        return "Finished."
+
     with gr.Blocks(title=f"{workflow_title} - Result") as app:
         with gr.Group(elem_classes="massbank-page massbank-kg-result-page"):
             gr.HTML(
@@ -398,17 +414,17 @@ def create_app(
                     outputs=progress_text,
                 )
 
-            result_load_event = load_event.then(
+            result_load_event = load_event.success(
                 fn=load_search_summary,
                 inputs=[],
                 outputs=summary_text,
                 show_progress="hidden",
-            ).then(
+            ).success(
                 fn=lambda: "Loading MassBank result...",
                 inputs=[],
                 outputs=progress_text,
                 show_progress="hidden",
-            ).then(
+            ).success(
                 fn=(
                     load_massbank_without_tab_switch
                     if is_msp_workflow
@@ -420,22 +436,22 @@ def create_app(
                     result_tabs,
                 ],
                 show_progress="hidden",
-            ).then(
+            ).success(
                 fn=lambda: "MassBank result loaded. Generating SPARQL queries...",
                 inputs=[],
                 outputs=progress_text,
                 show_progress="hidden",
-            ).then(
+            ).success(
                 fn=load_class_analysis,
                 inputs=[],
                 outputs=class_analysis_table,
                 show_progress="hidden",
-            ).then(
+            ).success(
                 fn=load_output_archive,
                 inputs=[],
                 outputs=[output_status, output_archive],
                 show_progress="hidden",
-            ).then(
+            ).success(
                 fn=(
                     load_sparql_without_tab_switch
                     if is_msp_workflow
@@ -451,12 +467,12 @@ def create_app(
                     result_tabs,
                 ],
                 show_progress="hidden",
-            ).then(
+            ).success(
                 fn=lambda: "SPARQL queries generated. Loading KG result...",
                 inputs=[],
                 outputs=progress_text,
                 show_progress="hidden",
-            ).then(
+            ).success(
                 fn=(
                     load_kg_without_tab_switch
                     if is_msp_workflow
@@ -470,7 +486,7 @@ def create_app(
                     result_tabs,
                 ],
                 show_progress="hidden",
-            ).then(
+            ).success(
                 fn=lambda: "KG result loaded. Running LLM interpretation...",
                 inputs=[],
                 outputs=progress_text,
@@ -478,7 +494,7 @@ def create_app(
             )
 
             if is_msp_workflow:
-                result_load_event.then(
+                result_load_event.success(
                     fn=lambda: (
                         "Interactive result chat is ready. Automatic full-result "
                         "LLM interpretation is skipped to limit token usage."
@@ -486,13 +502,13 @@ def create_app(
                     inputs=[],
                     outputs=interpretation_status_text,
                     show_progress="hidden",
-                ).then(
+                ).success(
                     fn=load_disease_options,
                     inputs=[],
                     outputs=[disease_class, metadata_class],
                     show_progress="hidden",
-                ).then(
-                    fn=lambda: "Finished.",
+                ).success(
+                    fn=verify_processing_completed,
                     inputs=[],
                     outputs=progress_text,
                     show_progress="hidden",
@@ -555,7 +571,7 @@ def create_app(
                     ],
                 )
             else:
-                result_load_event.then(
+                result_load_event.success(
                     fn=load_interpretation_result,
                     inputs=[],
                     outputs=[
@@ -564,8 +580,8 @@ def create_app(
                         interpretation_json_file,
                         result_tabs,
                     ],
-                ).then(
-                    fn=lambda: "Finished.",
+                ).success(
+                    fn=verify_processing_completed,
                     inputs=[],
                     outputs=progress_text,
                 )
