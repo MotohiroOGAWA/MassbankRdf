@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 from typing import Any
 
 import gradio as gr
@@ -19,6 +21,75 @@ from massbank_rdf.services.result_chat import (
     retrieve_result_chat_evidence,
     summarize_kg_result_counts,
 )
+from massbank_rdf.services.metadata_enrichment import (
+    METADATA_TYPES,
+    analyze_all_metadata_enrichment,
+)
+
+
+def write_disease_analysis_tsvs(
+    related: Any,
+    statistics: Any,
+    spectra: Any,
+) -> tuple[str, str, str]:
+    """Write every Disease Analysis result table as a downloadable TSV."""
+    output_dir = Path(tempfile.mkdtemp(prefix="massbank_rdf_disease_analysis_"))
+    tables = [
+        (
+            "related_diseases.tsv",
+            related,
+            ["disease", "connected_inchikey_count"],
+        ),
+        (
+            "disease_class_enrichment.tsv",
+            statistics,
+            [
+                "disease", "sample_class", "connected_inchikey_count",
+                "class_spectra", "class_total_spectra", "class_prevalence",
+                "other_spectra", "other_total_spectra", "other_prevalence",
+                "enrichment_ratio", "odds_ratio", "fisher_p_value",
+                "fdr_bh", "significant_in_class",
+            ],
+        ),
+        (
+            "disease_connected_spectra.tsv",
+            spectra,
+            [
+                "disease", "spectrum_uid", "source_file", "sample_class",
+                "inchikey", "accession_id", "name", "score", "match",
+                "kg_metadata_count", "combined_rank_sum",
+            ],
+        ),
+    ]
+    paths = []
+    for file_name, value, empty_columns in tables:
+        frame = value if isinstance(value, pd.DataFrame) else pd.DataFrame(value)
+        if frame.empty and not len(frame.columns):
+            frame = pd.DataFrame(columns=empty_columns)
+        path = output_dir / file_name
+        frame.to_csv(path, sep="\t", index=False)
+        paths.append(str(path))
+    return tuple(paths)
+
+
+def write_metadata_enrichment_tsvs(
+    all_tests: pd.DataFrame,
+    significant_tests: pd.DataFrame,
+    entity_links: pd.DataFrame,
+) -> tuple[str, str, str]:
+    """Write full metadata enrichment outputs as TSV files."""
+    output_dir = Path(tempfile.mkdtemp(prefix="massbank_rdf_metadata_enrichment_"))
+    tables = (
+        ("all_metadata_enrichment_tests.tsv", all_tests),
+        ("significant_metadata_enrichment.tsv", significant_tests),
+        ("metadata_entity_inchikey_links.tsv", entity_links),
+    )
+    paths = []
+    for file_name, frame in tables:
+        path = output_dir / file_name
+        frame.to_csv(path, sep="\t", index=False)
+        paths.append(str(path))
+    return tuple(paths)
 
 
 def create_result_chat_tab():
@@ -88,11 +159,71 @@ def create_result_chat_tab():
                 interactive=False,
                 wrap=True,
             )
+            with gr.Row():
+                related_diseases_tsv = gr.File(
+                    label="Download related diseases TSV",
+                    interactive=False,
+                )
+                disease_statistics_tsv = gr.File(
+                    label="Download enrichment TSV",
+                    interactive=False,
+                )
+                disease_spectra_tsv = gr.File(
+                    label="Download connected spectra TSV",
+                    interactive=False,
+                )
+        with gr.Tab("Metadata Enrichment"):
+            gr.Markdown(
+                "Run spectrum-level Fisher enrichment tests for every KG "
+                "metadata entity and selected sample class."
+            )
+            metadata_types = gr.CheckboxGroup(
+                label="KG metadata types",
+                choices=list(METADATA_TYPES),
+                value=list(METADATA_TYPES),
+            )
+            metadata_class = gr.Dropdown(
+                label="Sample classes",
+                choices=[],
+                value=None,
+                allow_custom_value=False,
+            )
+            metadata_run = gr.Button(
+                "Run all metadata enrichment tests",
+                variant="primary",
+            )
+            metadata_status = gr.Textbox(
+                label="Metadata enrichment status",
+                interactive=False,
+                lines=5,
+            )
+            metadata_significant = gr.Dataframe(
+                label="Significant metadata results",
+                interactive=False,
+                wrap=True,
+            )
+            with gr.Row():
+                metadata_all_tsv = gr.File(
+                    label="Download all tests TSV",
+                    interactive=False,
+                )
+                metadata_significant_tsv = gr.File(
+                    label="Download significant results TSV",
+                    interactive=False,
+                )
+                metadata_links_tsv = gr.File(
+                    label="Download entity-InChIKey links TSV",
+                    interactive=False,
+                )
     scope = gr.State([])
     return (
         chatbot, question, send, clear, status, evidence, scope,
         disease_query, disease_class, disease_run, disease_status,
         related_diseases, disease_statistics, disease_spectra,
+        related_diseases_tsv, disease_statistics_tsv, disease_spectra_tsv,
+        metadata_types, metadata_class, metadata_run, metadata_status,
+        metadata_significant, metadata_all_tsv, metadata_significant_tsv,
+        metadata_links_tsv,
     )
 
 
@@ -203,15 +334,17 @@ def build_disease_options_loader(
         )
         payload = session_store.get(session_id) if session_id else None
         if not isinstance(payload, dict):
-            return gr.update(choices=[], value=None)
+            update = gr.update(choices=[], value=None)
+            return update, update
         classes = sample_classes_from_results(
             payload.get("spectrum_annotation_df"),
             payload.get("massbank_detail_df"),
         )
-        return gr.update(
+        update = gr.update(
             choices=[("All sample classes", "__ALL__"), *classes],
             value="__ALL__",
         )
+        return update, update
 
     return load
 
@@ -226,20 +359,30 @@ def build_disease_analysis_handler(
         sample_class: str | None,
         request: gr.Request,
     ):
+        def package(status: str, related: Any, statistics: Any, spectra: Any):
+            paths = write_disease_analysis_tsvs(
+                related,
+                statistics,
+                spectra,
+            )
+            return status, related, statistics, spectra, *paths
+
         session_id = (
             request.request.cookies.get(session_cookie_name)
             or request.request.query_params.get("job_id")
         )
         payload = session_store.get(session_id) if session_id else None
         if not isinstance(payload, dict):
-            return "Result session was not found.", [], [], []
+            return package("Result session was not found.", [], [], [])
         query = (query or "").strip()
         if not query:
-            return "Enter a disease name or related term.", [], [], []
+            return package("Enter a disease name or related term.", [], [], [])
 
         mapping = disease_inchikey_map(payload.get("kg_evidence", {}))
         if not mapping:
-            return "No disease names were found in this KG result.", [], [], []
+            return package(
+                "No disease names were found in this KG result.", [], [], []
+            )
         try:
             selected, method_status = select_related_disease_names(
                 query,
@@ -247,7 +390,9 @@ def build_disease_analysis_handler(
                 payload.get("llm_config", {}),
             )
         except Exception as exc:
-            return f"Disease-name selection failed: {exc}", [], [], []
+            return package(
+                f"Disease-name selection failed: {exc}", [], [], []
+            )
         related_table = [
             {
                 "disease": name,
@@ -256,7 +401,7 @@ def build_disease_analysis_handler(
             for name in selected
         ]
         if not selected:
-            return (
+            return package(
                 f"{method_status}\nNo related disease names were selected "
                 "from this result.",
                 related_table,
@@ -308,7 +453,7 @@ def build_disease_analysis_handler(
                     ascending=[False, True, False],
                 )
         except Exception as exc:
-            return (
+            return package(
                 f"Disease enrichment failed: {exc}",
                 related_table,
                 [],
@@ -335,7 +480,7 @@ def build_disease_analysis_handler(
             "(BH FDR < 0.05 and enrichment > 1): "
             + (", ".join(significant) if significant else "none")
         )
-        return (
+        return package(
             f"{method_status}\n{conclusion}\n"
             "These are KG disease associations of spectral annotation "
             "candidates, not directly observed diseases.",
@@ -343,5 +488,70 @@ def build_disease_analysis_handler(
             statistics,
             spectra,
         )
+
+    return analyze
+
+
+def build_metadata_enrichment_handler(
+    session_store: TemporarySessionStore,
+    *,
+    session_cookie_name: str,
+):
+    def analyze(
+        metadata_types: list[str] | None,
+        sample_class: str | None,
+        request: gr.Request,
+    ):
+        session_id = (
+            request.request.cookies.get(session_cookie_name)
+            or request.request.query_params.get("job_id")
+        )
+        payload = session_store.get(session_id) if session_id else None
+        if not isinstance(payload, dict):
+            return "Result session was not found.", [], None, None, None
+        selected_types = [
+            value for value in (metadata_types or [])
+            if value in METADATA_TYPES
+        ]
+        if not selected_types:
+            return "Select at least one KG metadata type.", [], None, None, None
+        selected_classes = (
+            None
+            if sample_class in (None, "", "__ALL__")
+            else [str(sample_class)]
+        )
+        try:
+            all_tests, links = analyze_all_metadata_enrichment(
+                kg_evidence=payload.get("kg_evidence", {}),
+                annotation_df=payload.get("spectrum_annotation_df"),
+                candidate_df=payload.get("massbank_detail_df"),
+                metadata_types=selected_types,
+                sample_classes=selected_classes,
+            )
+        except Exception as exc:
+            return f"Metadata enrichment failed: {exc}", [], None, None, None
+        significant = (
+            all_tests[all_tests["significant_global"]].copy()
+            if not all_tests.empty
+            else pd.DataFrame(columns=all_tests.columns)
+        )
+        paths = write_metadata_enrichment_tsvs(
+            all_tests,
+            significant,
+            links,
+        )
+        display = (
+            significant.head(1_000)
+            if not significant.empty
+            else all_tests.head(1_000)
+        )
+        status = (
+            f"Completed {len(all_tests):,} Fisher tests across "
+            f"{all_tests['metadata_type'].nunique() if not all_tests.empty else 0:,} "
+            f"metadata types. Global-FDR significant results: "
+            f"{len(significant):,}. The browser table is limited to 1,000 rows; "
+            "the TSV files contain all rows."
+        )
+        return status, display, *paths
 
     return analyze

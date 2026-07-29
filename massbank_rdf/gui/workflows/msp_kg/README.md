@@ -328,8 +328,13 @@ Input spectrum 3 → MassBank top N
 ブラウザには次のような進捗を表示する。
 
 ```text
-MassBank search: spectrum 350/1,394
+MassBank search: spectrum 350/1,394 (sample.msp record 350)
 ```
+
+resultページ内の常設progress barとテキストをストリーミング更新する。
+MassBank検索を全体の0–80%、KG検索を80–98%、結果ファイル・ZIP作成を
+98–100%として表示する。Gradio標準の一時的なloading表示が見えない環境でも、
+現在処理中のスペクトル番号、ファイル名、ファイル内レコード番号を確認できる。
 
 検索ループ中は、各hitを次のコンパクトな値だけでチェックポイントへ記録する。
 
@@ -656,6 +661,64 @@ significant_in_class =
 accession・cosine similarityを表示する。これは疾患そのものの検出ではなく、
 スペクトル類似候補のInChIKeyに付いたKG disease associationのクラス濃縮
 である。
+
+各実行結果は次のTSVとして必ずダウンロードできる。該当行が0件の場合も
+列ヘッダーを持つ空TSVを生成する。
+
+| TSV | 内容 |
+| --- | --- |
+| `related_diseases.tsv` | 入力語に関連すると選択された疾患名とInChIKey数 |
+| `disease_class_enrichment.tsv` | Fisher検定、FDR、prevalence、enrichment |
+| `disease_connected_spectra.tsv` | 疾患へ接続したスペクトルとMassBank候補根拠 |
+
+#### Metadata Enrichment
+
+疾患名を指定せず、KG結果に存在する全metadata entityについて有意差検定を
+実行する専用機能である。対象metadata種別：
+
+- compounds
+- diseases
+- pathways
+- biospecimens
+- organisms
+- activities
+
+metadata種別とsample classを選択して
+`Run all metadata enrichment tests`を押す。`All sample classes`では、
+選択した全metadata entity × 全sample classの組み合わせを検定する。
+
+entityはKG sourceとentity JSONの組み合わせでユニーク化する。同じentityへ
+複数InChIKeyが接続する場合はまとめ、`selected_for_kg=True`の候補を介して
+接続スペクトル集合を作る。同じentity・同じスペクトルの重複候補は1観測
+として扱う。
+
+各entity・classについて次を計算する。
+
+- class内の接続スペクトル数とprevalence
+- その他クラスの接続スペクトル数とprevalence
+- enrichment ratio
+- Fisher exact odds ratio
+- Fisher exact p値
+- 全metadata種別・全class横断のBH FDR
+- metadata種別内のBH FDR
+
+`significant_global`は、全検定横断FDR < 0.05、enrichment ratio > 1、
+class内接続スペクトル数 > 0をすべて満たす場合に`True`となる。
+`significant_within_metadata_type`はmetadata種別内FDRへ同じ条件を適用する。
+
+ブラウザ表は応答性のため最大1,000行のみ表示するが、次のTSVには省略せず
+全行を保存する。
+
+| TSV | 内容 |
+| --- | --- |
+| `all_metadata_enrichment_tests.tsv` | 実行した全entity×class検定 |
+| `significant_metadata_enrichment.tsv` | 全検定横断FDRで有意な結果 |
+| `metadata_entity_inchikey_links.tsv` | metadata entityからInChIKeyへの根拠対応 |
+
+この解析はKG associationを持つスペクトル候補のクラス濃縮である。
+metadataや疾患そのものを試料から直接測定したという意味ではない。また、
+ファイルへ割り当てたclass内のスペクトルを観測単位とするため、独立した
+生物学的replicate数とは異なる可能性がある。
 
 ## ZIP内の出力
 

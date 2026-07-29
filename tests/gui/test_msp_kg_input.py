@@ -308,9 +308,11 @@ class TestMspKgInput(unittest.TestCase):
             )
         )
 
-        message = processor(request)
+        updates = list(processor(request))
+        message = updates[-1][0]
 
         self.assertIn("already completed", message)
+        self.assertIn("100.0%", updates[-1][1])
         kg_service.assert_not_called()
 
     def test_llm_settings_round_trip_includes_api_key(self) -> None:

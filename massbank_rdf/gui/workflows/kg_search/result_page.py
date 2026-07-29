@@ -24,6 +24,7 @@ from massbank_rdf.gui.workflows.kg_search.result_tabs.interpretation_tab import 
 from massbank_rdf.gui.workflows.msp_kg.result_chat_tab import (
     build_disease_analysis_handler,
     build_disease_options_loader,
+    build_metadata_enrichment_handler,
     build_result_chat_handler,
     create_result_chat_tab,
 )
@@ -236,6 +237,28 @@ def create_app(
         if is_msp_workflow
         else None
     )
+    analyze_metadata = (
+        build_metadata_enrichment_handler(
+            session_store,
+            session_cookie_name=session_cookie_name,
+        )
+        if is_msp_workflow
+        else None
+    )
+
+    def load_massbank_without_tab_switch(request: gr.Request):
+        table, _ = load_massbank_result(request)
+        return table, gr.update()
+
+    def load_sparql_without_tab_switch(request: gr.Request):
+        values = list(load_sparql_result(request))
+        values[-1] = gr.update()
+        return tuple(values)
+
+    def load_kg_without_tab_switch(request: gr.Request):
+        values = list(load_kg_display_result(request))
+        values[-1] = gr.update()
+        return tuple(values)
 
     with gr.Blocks(title=f"{workflow_title} - Result") as app:
         with gr.Group(elem_classes="massbank-page massbank-kg-result-page"):
@@ -270,6 +293,11 @@ def create_app(
                 value="Loading search summary...",
                 lines=3,
                 interactive=False,
+            )
+            progress_bar = gr.HTML(
+                '<div style="display:flex;align-items:center;gap:12px;">'
+                '<progress style="width:100%;height:24px;" '
+                'value="0" max="100"></progress><strong>0.0%</strong></div>'
             )
 
             with gr.Tabs(selected="massbank") as result_tabs:
@@ -333,6 +361,17 @@ def create_app(
                             related_diseases,
                             disease_statistics,
                             disease_spectra,
+                            related_diseases_tsv,
+                            disease_statistics_tsv,
+                            disease_spectra_tsv,
+                            metadata_types,
+                            metadata_class,
+                            metadata_run,
+                            metadata_status,
+                            metadata_significant,
+                            metadata_all_tsv,
+                            metadata_significant_tsv,
+                            metadata_links_tsv,
                         ) = create_result_chat_tab()
 
             gr.HTML(
@@ -343,45 +382,63 @@ def create_app(
                 """.format(input_path=input_path)
             )
 
-            load_event = app.load(
-                fn=(
-                    preload_fn
-                    if preload_fn is not None
-                    else lambda: "Loading saved search result..."
-                ),
-                inputs=[],
-                outputs=progress_text,
-            )
+            if is_msp_workflow:
+                load_event = app.load(
+                    fn=preload_fn,
+                    inputs=[],
+                    outputs=[progress_text, progress_bar],
+                    show_progress="hidden",
+                )
+            else:
+                load_event = app.load(
+                    fn=lambda: "Loading saved search result...",
+                    inputs=[],
+                    outputs=progress_text,
+                )
 
             result_load_event = load_event.then(
                 fn=load_search_summary,
                 inputs=[],
                 outputs=summary_text,
+                show_progress="hidden",
             ).then(
                 fn=lambda: "Loading MassBank result...",
                 inputs=[],
                 outputs=progress_text,
+                show_progress="hidden",
             ).then(
-                fn=load_massbank_result,
+                fn=(
+                    load_massbank_without_tab_switch
+                    if is_msp_workflow
+                    else load_massbank_result
+                ),
                 inputs=[],
                 outputs=[
                     massbank_result_table,
                     result_tabs,
                 ],
+                show_progress="hidden",
             ).then(
                 fn=lambda: "MassBank result loaded. Generating SPARQL queries...",
                 inputs=[],
                 outputs=progress_text,
+                show_progress="hidden",
             ).then(
                 fn=load_class_analysis,
                 inputs=[],
                 outputs=class_analysis_table,
+                show_progress="hidden",
             ).then(
                 fn=load_output_archive,
                 inputs=[],
                 outputs=[output_status, output_archive],
+                show_progress="hidden",
             ).then(
-                fn=load_sparql_result,
+                fn=(
+                    load_sparql_without_tab_switch
+                    if is_msp_workflow
+                    else load_sparql_result
+                ),
                 inputs=[],
                 outputs=[
                     sparql_status_text,
@@ -391,12 +448,18 @@ def create_app(
                     knapsack_activity_query,
                     result_tabs,
                 ],
+                show_progress="hidden",
             ).then(
                 fn=lambda: "SPARQL queries generated. Loading KG result...",
                 inputs=[],
                 outputs=progress_text,
+                show_progress="hidden",
             ).then(
-                fn=load_kg_display_result,
+                fn=(
+                    load_kg_without_tab_switch
+                    if is_msp_workflow
+                    else load_kg_display_result
+                ),
                 inputs=[],
                 outputs=[
                     kg_status_text,
@@ -404,10 +467,12 @@ def create_app(
                     kg_json_file,
                     result_tabs,
                 ],
+                show_progress="hidden",
             ).then(
                 fn=lambda: "KG result loaded. Running LLM interpretation...",
                 inputs=[],
                 outputs=progress_text,
+                show_progress="hidden",
             )
 
             if is_msp_workflow:
@@ -418,14 +483,17 @@ def create_app(
                     ),
                     inputs=[],
                     outputs=interpretation_status_text,
+                    show_progress="hidden",
                 ).then(
                     fn=load_disease_options,
                     inputs=[],
-                    outputs=disease_class,
+                    outputs=[disease_class, metadata_class],
+                    show_progress="hidden",
                 ).then(
                     fn=lambda: "Finished.",
                     inputs=[],
                     outputs=progress_text,
+                    show_progress="hidden",
                 )
                 result_send.click(
                     fn=ask_result,
@@ -468,6 +536,20 @@ def create_app(
                         related_diseases,
                         disease_statistics,
                         disease_spectra,
+                        related_diseases_tsv,
+                        disease_statistics_tsv,
+                        disease_spectra_tsv,
+                    ],
+                )
+                metadata_run.click(
+                    fn=analyze_metadata,
+                    inputs=[metadata_types, metadata_class],
+                    outputs=[
+                        metadata_status,
+                        metadata_significant,
+                        metadata_all_tsv,
+                        metadata_significant_tsv,
+                        metadata_links_tsv,
                     ],
                 )
             else:

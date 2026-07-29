@@ -6,7 +6,7 @@ import pickle
 from pathlib import Path
 import shutil
 import tempfile
-from typing import Any
+from typing import Any, Iterator
 
 import gradio as gr
 import pandas as pd
@@ -35,6 +35,19 @@ def _job_signature(job: dict[str, Any]) -> str:
     comparable = {key: value for key, value in job.items() if key != "resume_enabled"}
     encoded = json.dumps(comparable, ensure_ascii=False, sort_keys=True).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _progress_output(message: str, fraction: float) -> tuple[str, str]:
+    percent = max(0.0, min(100.0, float(fraction) * 100.0))
+    return (
+        message,
+        (
+            '<div style="display:flex;align-items:center;gap:12px;">'
+            '<progress style="width:100%;height:24px;" '
+            f'value="{percent:.2f}" max="100"></progress>'
+            f"<strong>{percent:.1f}%</strong></div>"
+        ),
+    )
 
 
 def _aggregate_massbank(candidate_df: pd.DataFrame) -> pd.DataFrame:
@@ -186,7 +199,11 @@ def build_batch_processor(
     session_store: TemporarySessionStore,
     kg_lookup_service: Any,
 ):
-    def process(request: gr.Request, progress=gr.Progress()) -> str:
+    def process(
+        request: gr.Request,
+        progress=gr.Progress(),
+    ) -> Iterator[tuple[str, str]]:
+        yield _progress_output("Preparing MSP batch processing...", 0.0)
         session_id = (
             request.request.cookies.get("msp_kg_session_id")
             or request.request.query_params.get("job_id")
@@ -195,7 +212,12 @@ def build_batch_processor(
         if not isinstance(payload, dict):
             raise gr.Error("MSP batch job was not found. Please return to input.")
         if payload.get("kg_precomputed"):
-            return f"Batch processing was already completed: {payload.get('output_directory', '')}"
+            yield _progress_output(
+                "Batch processing was already completed: "
+                f"{payload.get('output_directory', '')}",
+                1.0,
+            )
+            return
 
         job = payload.get("msp_batch_job")
         if not isinstance(job, dict):
@@ -258,9 +280,17 @@ def build_batch_processor(
         max_kg = job.get("max_massbank_inchikey")
         for task_index in range(int(state["next_index"]), len(tasks)):
             file_name, sample_class, file_record_index, record = tasks[task_index]
+            message = (
+                f"MassBank search: spectrum {task_index + 1:,}/{len(tasks):,} "
+                f"({file_name} record {file_record_index:,})"
+            )
+            yield _progress_output(
+                message,
+                0.8 * task_index / max(1, len(tasks)),
+            )
             progress(
                 (task_index, len(tasks)),
-                desc=f"MassBank search: spectrum {task_index + 1:,}/{len(tasks):,}",
+                desc=message,
             )
             precursor_mz = (
                 _parse_optional_float(
@@ -319,6 +349,10 @@ def build_batch_processor(
                 with checkpoint_path.open("wb") as handle:
                     pickle.dump(state, handle)
 
+        yield _progress_output(
+            "MassBank search completed. Ranking candidates with KG metadata scores...",
+            0.8,
+        )
         raw_hits_df = pd.DataFrame(
             state["raw_hits"],
             columns=[
@@ -433,6 +467,10 @@ def build_batch_processor(
         for chunk_offset in range(kg_start, len(chunks)):
             index = chunk_offset + 1
             chunk = chunks[chunk_offset]
+            yield _progress_output(
+                f"KG search: chunk {index:,}/{len(chunks):,}",
+                0.8 + 0.18 * (index - 1) / max(1, len(chunks)),
+            )
             progress((index - 1, max(1, len(chunks))), desc=f"KG search: chunk {index:,}/{len(chunks):,}")
             evidence, queries = kg_lookup_service.search_evidence_by_inchikeys(
                 chunk,
@@ -446,6 +484,7 @@ def build_batch_processor(
             with checkpoint_path.open("wb") as handle:
                 pickle.dump(state, handle)
 
+        yield _progress_output("Writing result files and ZIP archive...", 0.98)
         kg_evidence = _merge_kg_evidence(evidence_parts)
         kg_queries = _merge_kg_queries(query_parts)
         aggregate_df = _aggregate_massbank(candidate_df)
@@ -530,6 +569,9 @@ def build_batch_processor(
         payload.pop("msp_batch_job", None)
         session_store.set(session_id, payload)
         progress(1.0, desc="MSP batch processing completed")
-        return f"Completed. Results saved to: {output_dir}"
+        yield _progress_output(
+            f"Completed. Results saved to: {output_dir}",
+            1.0,
+        )
 
     return process

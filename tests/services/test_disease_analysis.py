@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
@@ -9,6 +10,9 @@ from massbank_rdf.services.disease_analysis import (
     disease_inchikey_map,
     local_related_disease_names,
     sample_classes_from_results,
+)
+from massbank_rdf.gui.workflows.msp_kg.result_chat_tab import (
+    write_disease_analysis_tsvs,
 )
 
 
@@ -106,6 +110,28 @@ class TestDiseaseAnalysis(unittest.TestCase):
         self.assertEqual(
             sample_classes_from_results(annotations, pd.DataFrame()),
             ["RP", "WT"],
+        )
+
+    def test_every_disease_result_table_is_downloadable_as_tsv(self) -> None:
+        paths = write_disease_analysis_tsvs(
+            [{"disease": "Alzheimer's disease", "connected_inchikey_count": 1}],
+            pd.DataFrame(),
+            pd.DataFrame(),
+        )
+        self.assertEqual(len(paths), 3)
+        for path in paths:
+            self.assertTrue(Path(path).is_file())
+        self.assertIn(
+            "disease\tconnected_inchikey_count",
+            Path(paths[0]).read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "fisher_p_value",
+            Path(paths[1]).read_text(encoding="utf-8"),
+        )
+        self.assertIn(
+            "spectrum_uid",
+            Path(paths[2]).read_text(encoding="utf-8"),
         )
 
 
