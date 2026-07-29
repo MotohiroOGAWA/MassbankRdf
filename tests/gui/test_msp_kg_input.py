@@ -13,7 +13,9 @@ from massbank_rdf.gui.workflows.msp_kg.input_page import (
     _merge_kg_evidence,
     _merge_kg_queries,
     _normalize_ion_mode,
+    assign_default_sample_classes,
     inspect_uploaded_msp,
+    inspect_uploaded_msps,
     load_workflow_config_from_zip,
     parse_msp_records,
     read_msp_input,
@@ -76,6 +78,26 @@ class TestMspKgInput(unittest.TestCase):
         self.assertEqual(
             status,
             "MSP loaded: 2 records; 2 readable spectra; 4 total peaks.",
+        )
+
+    def test_multiple_uploads_start_with_blank_sample_classes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for file_name in ("first.msp", "second.msp"):
+                path = Path(directory) / file_name
+                path.write_text(MSP_TEXT, encoding="utf-8")
+                paths.append(str(path))
+            _, classes = inspect_uploaded_msps(paths)
+
+        self.assertEqual(classes["sample_class"].tolist(), ["", ""])
+
+    def test_blank_sample_classes_use_file_order_labels(self) -> None:
+        result = assign_default_sample_classes(
+            pd.Series(["", "Treatment", None])
+        )
+        self.assertEqual(
+            result.tolist(),
+            ["Class1", "Treatment", "Class3"],
         )
 
     def test_upload_inspection_reports_empty_record_without_failing(self) -> None:

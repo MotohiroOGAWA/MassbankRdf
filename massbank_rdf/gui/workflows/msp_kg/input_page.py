@@ -170,7 +170,7 @@ def inspect_uploaded_msps(
         rows.append(
             {
                 "file_name": path.name,
-                "sample_class": path.name,
+                "sample_class": "",
                 "records": record_count,
                 "readable": len(records),
                 "skipped": skipped_count,
@@ -189,6 +189,19 @@ def inspect_uploaded_msps(
             f"Skipped {total_skipped:,} records without readable peaks."
         )
     return status, pd.DataFrame(rows)
+
+
+def assign_default_sample_classes(values: pd.Series) -> pd.Series:
+    """Fill blank classes with stable file-order labels."""
+    classes = values.fillna("").astype(str).str.strip()
+    return pd.Series(
+        [
+            sample_class or f"Class{index}"
+            for index, sample_class in enumerate(classes, start=1)
+        ],
+        index=classes.index,
+        dtype=str,
+    )
 
 
 def load_workflow_config_from_zip(
@@ -404,14 +417,8 @@ def create_app(
             class_df = pd.DataFrame(file_classes)
             if len(class_df) != len(msp_files) or "sample_class" not in class_df:
                 raise ValueError("The file/class table does not match uploaded files.")
-            classes = class_df["sample_class"].fillna("").astype(str).str.strip()
-            classes = pd.Series(
-                [
-                    sample_class or file_name
-                    for sample_class, file_name in zip(classes, file_names)
-                ],
-                index=classes.index,
-                dtype=str,
+            classes = assign_default_sample_classes(
+                class_df["sample_class"],
             )
             if use_precursor_mz and not str(precursor_mz_column).strip():
                 raise ValueError("Precursor m/z column name is required.")

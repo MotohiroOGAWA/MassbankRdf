@@ -89,6 +89,15 @@ def rank_candidates_with_kg_metadata(
         on="_normalized_inchikey",
         how="left",
     )
+    for column in count_columns:
+        result[column] = (
+            pd.to_numeric(result[column], errors="coerce").fillna(0).astype(int)
+        )
+    result["kg_metadata_count"] = (
+        pd.to_numeric(result["kg_metadata_count"], errors="coerce")
+        .fillna(0)
+        .astype(int)
+    )
     result = result.sort_values(
         ["combined_rank_sum", score_column, "kg_metadata_count"],
         ascending=[True, False, False],
@@ -117,6 +126,11 @@ def rank_grouped_candidates_with_kg_metadata(
     )
     valid = result.dropna(subset=["_normalized_inchikey"]).copy()
     if valid.empty:
+        result["massbank_similarity_rank"] = pd.NA
+        result["kg_metadata_count"] = 0
+        result["kg_metadata_rank"] = pd.NA
+        result["combined_rank_sum"] = pd.NA
+        result["combined_rank"] = pd.NA
         return result.drop(columns=["_normalized_inchikey"])
 
     by_group_key = (
@@ -175,6 +189,15 @@ def rank_grouped_candidates_with_kg_metadata(
         by_group_key.drop(columns=["best_similarity"]),
         on=[group_column, "_normalized_inchikey"],
         how="left",
+    )
+    for column in score_columns:
+        result[column] = (
+            pd.to_numeric(result[column], errors="coerce").fillna(0).astype(int)
+        )
+    result["kg_metadata_count"] = (
+        pd.to_numeric(result["kg_metadata_count"], errors="coerce")
+        .fillna(0)
+        .astype(int)
     )
     sort_columns = [
         column

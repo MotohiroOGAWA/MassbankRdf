@@ -96,6 +96,47 @@ class TestCandidateRanking(unittest.TestCase):
         )
         self.assertEqual(len(result), 3)
 
+    def test_missing_inchikey_has_zero_metadata_count(self) -> None:
+        source = pd.DataFrame(
+            [
+                {
+                    "spectrum_uid": "sample-a::1",
+                    "inchikey": "AAAAAAAAAAAAAA-BBBBBBBBBB-C",
+                    "score": 0.9,
+                },
+                {
+                    "spectrum_uid": "sample-a::1",
+                    "inchikey": None,
+                    "score": 0.8,
+                },
+            ]
+        )
+        result = rank_grouped_candidates_with_kg_metadata(
+            source,
+            StubScoreService(),
+            group_column="spectrum_uid",
+        )
+        missing = result[result["inchikey"].isna()].iloc[0]
+        self.assertEqual(missing["kg_metadata_count"], 0)
+        self.assertTrue(pd.isna(missing["combined_rank"]))
+
+    def test_all_missing_inchikeys_have_zero_metadata_count(self) -> None:
+        source = pd.DataFrame(
+            [
+                {
+                    "spectrum_uid": "sample-a::1",
+                    "inchikey": None,
+                    "score": 0.8,
+                },
+            ]
+        )
+        result = rank_grouped_candidates_with_kg_metadata(
+            source,
+            StubScoreService(),
+            group_column="spectrum_uid",
+        )
+        self.assertEqual(result.iloc[0]["kg_metadata_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
