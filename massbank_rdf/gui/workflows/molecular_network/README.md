@@ -26,9 +26,31 @@ The edge table may instead use an MSP `Name` value when that value is unique
 across all uploaded spectra. Empty or duplicated `Name` values cannot be used
 as aliases; use the canonical ID in that case.
 
+### Reusing a completed MSP KG result
+
+`Completed MSP KG result ZIP` accepts a ZIP produced by
+`/msp-kg/input/`. When supplied:
+
+1. Validate the completed-result schema and ZIP size.
+2. Compare the complete saved `spectrum_uid` set with the currently uploaded
+   MSP spectra.
+3. Reject the ZIP if any spectrum is missing or unexpected.
+4. Restore MassBank candidates, selected InChIKeys, KG evidence, SPARQL,
+   record summary, and annotations.
+5. Update candidate/annotation sample classes from the current file/class
+   table.
+6. Skip the per-spectrum MassBank search and batched KG search.
+7. Continue with edge generation/import, network comparison, Leiden, and the
+   unannotated-cluster fallback.
+
+This is substantially faster when the same MSP spectra have already completed
+the MSP KG workflow. A ZIP from different MSP files cannot be reused merely
+because its record count happens to be the same.
+
 ### Spectrum similarity edge table
 
-Upload TSV, CSV, or TXT with these case-sensitive columns:
+The edge table is optional. If supplied, upload TSV, CSV, or TXT with these
+case-sensitive columns:
 
 | Column | Meaning |
 |---|---|
@@ -39,6 +61,27 @@ Upload TSV, CSV, or TXT with these case-sensitive columns:
 
 Self-loops are removed. Reverse/duplicate edges are collapsed and the row with
 the highest `Score`, then highest `MatchPeakCount`, is retained.
+
+### Automatic edge calculation
+
+When the edge table is omitted, the workflow calculates it from the uploaded
+MSP spectra before MassBank search:
+
+1. Read and normalize the configured ion mode for every spectrum. A readable
+   spectrum without ion mode is rejected at input validation.
+2. Compare spectra only within the same ion mode.
+3. Build a sparse expanded m/z-bin incidence matrix to find candidate pairs.
+4. Re-evaluate candidate pairs with exact one-to-one peak matching within the
+   configured MassBank m/z tolerance.
+5. Calculate cosine similarity from the full spectrum norms and matched-peak
+   dot product.
+6. Retain pairs whose exact matched-peak count is at least the smallest
+   MatchPeakCount value in the network condition grid.
+
+Progress reports processed spectra and the number of qualifying edges. Sparse
+candidate discovery avoids exact comparison of every possible spectrum pair,
+while exact scoring prevents coarse-bin false positives from entering the
+network.
 
 ## MassBank and KG annotation
 
@@ -124,6 +167,8 @@ download tabs, plus network-condition and Cytoscape previews. The ZIP contains:
 | `network_cluster_assignments_all_conditions.csv` | Cluster/component assignment for every node and condition |
 | `selected_condition_spectrum_nodes.tsv` | Spectrum nodes and selected cluster attributes |
 | `selected_condition_similarity_edges.tsv` | Filtered spectrum-similarity edges |
+| `generated_similarity_edges.tsv` | Automatically calculated unfiltered edge input |
+| `uploaded_similarity_edges.tsv` | Validated/remapped uploaded edge input |
 | `unannotated_cluster_common_peaks.tsv` | Common peaks synthesized for fallback clusters |
 | `unannotated_cluster_massbank_candidates.tsv` | Fallback MassBank matches |
 | `molecular_network_config.json` | Network grid and selected-condition settings |

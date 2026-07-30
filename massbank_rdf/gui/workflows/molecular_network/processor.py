@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+import re
 import shutil
 from typing import Any, Iterator
 
@@ -30,6 +31,7 @@ from massbank_rdf.services.molecular_network import (
     build_cytoscape_tables,
     common_cluster_peaks,
     deduplicate_edges,
+    generate_similarity_edges,
     resolve_score_thresholds,
 )
 
@@ -246,13 +248,53 @@ def build_molecular_network_processor(
         if not isinstance(network_job, dict) or not isinstance(search_job, dict):
             raise gr.Error("Molecular-network settings were not found.")
         search_job_copy = dict(search_job)
-        for output in base_processor(request, progress):
-            yield output
+        if not network_job.get("edge_tsv"):
+            spectrum_nodes, spectra, _ = _prepare_spectra(
+                network_job["documents"],
+                ion_mode_column=str(
+                    search_job_copy.get("ion_mode_column", "IONMODE")
+                ),
+            )
+            ion_modes = spectrum_nodes.set_index("node_id")["ion_mode"].to_dict()
+            minimum_network_matches = min(
+                int(value) for value in network_job["match_peak_counts"]
+            )
+            generated_edges = None
+            for processed, total, edge_count, result in generate_similarity_edges(
+                spectra,
+                ion_modes,
+                mz_tolerance=float(search_job_copy["mz_tolerance"]),
+                minimum_matched_peaks=minimum_network_matches,
+            ):
+                generated_edges = result if result is not None else generated_edges
+                fraction = processed / max(1, total)
+                yield _progress_output(
+                    "Generating spectrum similarity edges: "
+                    f"{processed:,}/{total:,} spectra; "
+                    f"{edge_count:,} qualifying edges",
+                    0.08 * fraction,
+                )
+            if generated_edges is None or generated_edges.empty:
+                raise gr.Error(
+                    "No spectrum-similarity edges met the minimum matched-peak "
+                    "condition within the same ion mode."
+                )
+            network_job["edge_tsv"] = generated_edges.to_csv(
+                sep="\t", index=False
+            )
+            payload["molecular_network_job"] = network_job
+            session_store.set(session_id, payload)
+        for message, html in base_processor(request, progress):
+            match = re.search(r'value="([0-9.]+)"', html)
+            base_fraction = (
+                float(match.group(1)) / 100.0 if match else 0.0
+            )
+            yield _progress_output(message, 0.08 + 0.84 * base_fraction)
 
         payload = session_store.get(session_id)
         if not isinstance(payload, dict) or not payload.get("kg_precomputed"):
             raise gr.Error("MassBank/KG annotation did not complete.")
-        yield _progress_output("Preparing molecular-network parameter grid...", 0.985)
+        yield _progress_output("Preparing molecular-network parameter grid...", 0.94)
         try:
             spectrum_nodes, spectra, aliases = _prepare_spectra(
                 network_job["documents"],
@@ -291,7 +333,7 @@ def build_molecular_network_processor(
 
         yield _progress_output(
             "Searching unannotated clusters by common peaks (without precursor filter)...",
-            0.99,
+            0.97,
         )
         candidates = pd.DataFrame(payload.get("massbank_detail_df", []))
         fallback, common_peaks, fallback_evidence, fallback_queries = (
@@ -336,6 +378,15 @@ def build_molecular_network_processor(
             output_dir / "selected_condition_similarity_edges.tsv",
             sep="\t", index=False,
         )
+        edges.to_csv(
+            output_dir / (
+                "generated_similarity_edges.tsv"
+                if network_job.get("edge_source") == "generated"
+                else "uploaded_similarity_edges.tsv"
+            ),
+            sep="\t",
+            index=False,
+        )
         cytoscape_nodes.to_csv(output_dir / "node.tsv", sep="\t", index=False)
         cytoscape_edges.to_csv(output_dir / "edge.tsv", sep="\t", index=False)
         common_peaks.to_csv(
@@ -360,6 +411,10 @@ def build_molecular_network_processor(
         config = {
             "workflow": "molecular_network",
             "selected_condition_id": selected_condition,
+            "edge_source": network_job.get("edge_source", "uploaded"),
+            "reused_msp_kg_result": bool(
+                payload.get("reused_msp_kg_result")
+            ),
             **{
                 key: network_job[key]
                 for key in [

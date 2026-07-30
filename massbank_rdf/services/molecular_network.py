@@ -8,6 +8,7 @@ from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
+from scipy import sparse
 
 
 EDGE_COLUMNS = ("SourceID", "TargetID", "Score", "MatchPeakCount")
@@ -30,6 +31,150 @@ class NetworkCondition:
             f"match{self.match_peak_count}_score{score}_top{top}_"
             f"res{self.resolution:g}"
         )
+
+
+def _exact_spectrum_cosine(
+    first: tuple[Iterable[float], Iterable[float]],
+    second: tuple[Iterable[float], Iterable[float]],
+    mz_tolerance: float,
+) -> tuple[float, int]:
+    """Calculate one-to-one tolerance-matched cosine and matched-peak count."""
+    first_mz = np.asarray(list(first[0]), dtype=float)
+    first_intensity = np.asarray(list(first[1]), dtype=float)
+    second_mz = np.asarray(list(second[0]), dtype=float)
+    second_intensity = np.asarray(list(second[1]), dtype=float)
+    first_order = np.argsort(first_mz, kind="stable")
+    second_order = np.argsort(second_mz, kind="stable")
+    first_mz = first_mz[first_order]
+    first_intensity = first_intensity[first_order]
+    second_mz = second_mz[second_order]
+    second_intensity = second_intensity[second_order]
+    norm = float(np.linalg.norm(first_intensity) * np.linalg.norm(second_intensity))
+    if not len(first_mz) or not len(second_mz) or norm <= 0:
+        return 0.0, 0
+    candidates: list[tuple[float, int, int]] = []
+    right_start = 0
+    for left_index, mz in enumerate(first_mz):
+        while (
+            right_start < len(second_mz)
+            and second_mz[right_start] < mz - mz_tolerance
+        ):
+            right_start += 1
+        right_index = right_start
+        while (
+            right_index < len(second_mz)
+            and second_mz[right_index] <= mz + mz_tolerance
+        ):
+            candidates.append(
+                (abs(float(mz - second_mz[right_index])), left_index, right_index)
+            )
+            right_index += 1
+    used_left: set[int] = set()
+    used_right: set[int] = set()
+    dot_product = 0.0
+    for _, left_index, right_index in sorted(candidates):
+        if left_index in used_left or right_index in used_right:
+            continue
+        used_left.add(left_index)
+        used_right.add(right_index)
+        dot_product += float(
+            first_intensity[left_index] * second_intensity[right_index]
+        )
+    return dot_product / norm, len(used_left)
+
+
+def generate_similarity_edges(
+    spectra: dict[str, tuple[Iterable[float], Iterable[float]]],
+    ion_modes: dict[str, str],
+    *,
+    mz_tolerance: float,
+    minimum_matched_peaks: int,
+    batch_size: int = 250,
+):
+    """Yield progress while generating sparse-candidate, exact cosine edges.
+
+    Yields `(processed_nodes, total_nodes, edge_count, result)`; `result` is
+    only populated in the final yield.
+    """
+    if mz_tolerance <= 0:
+        raise ValueError("m/z tolerance must be greater than zero.")
+    if minimum_matched_peaks < 1:
+        raise ValueError("Minimum matched peaks must be at least one.")
+    grouped: dict[str, list[str]] = {}
+    for node_id in spectra:
+        ion_mode = str(ion_modes.get(node_id, "")).strip()
+        if ion_mode:
+            grouped.setdefault(ion_mode, []).append(node_id)
+    total_nodes = sum(len(values) for values in grouped.values())
+    processed_nodes = 0
+    rows: list[dict[str, Any]] = []
+    for ion_mode, node_ids in grouped.items():
+        if len(node_ids) < 2:
+            processed_nodes += len(node_ids)
+            yield processed_nodes, total_nodes, len(rows), None
+            continue
+        all_mz = [
+            np.asarray(list(spectra[node_id][0]), dtype=float)
+            for node_id in node_ids
+        ]
+        maximum_bin = max(
+            (int(np.floor(mz.max() / mz_tolerance)) for mz in all_mz if len(mz)),
+            default=0,
+        )
+        matrix_rows: list[int] = []
+        matrix_columns: list[int] = []
+        for row_index, mz_values in enumerate(all_mz):
+            bins = np.floor(mz_values / mz_tolerance).astype(np.int64)
+            expanded = np.unique(
+                np.concatenate([bins - 1, bins, bins + 1])
+            )
+            expanded = expanded[expanded >= 0]
+            matrix_rows.extend([row_index] * len(expanded))
+            matrix_columns.extend(expanded.tolist())
+        incidence = sparse.csr_matrix(
+            (
+                np.ones(len(matrix_rows), dtype=np.int32),
+                (matrix_rows, matrix_columns),
+            ),
+            shape=(len(node_ids), maximum_bin + 2),
+        )
+        incidence.data[:] = 1
+        for start in range(0, len(node_ids), int(batch_size)):
+            stop = min(start + int(batch_size), len(node_ids))
+            overlap = (incidence[start:stop] @ incidence.T).tocoo()
+            candidate_pairs = sorted(
+                {
+                    (start + int(local), int(target))
+                    for local, target, count in zip(
+                        overlap.row, overlap.col, overlap.data
+                    )
+                    if start + int(local) < int(target)
+                    and int(count) >= int(minimum_matched_peaks)
+                }
+            )
+            for left_index, right_index in candidate_pairs:
+                score, matched = _exact_spectrum_cosine(
+                    spectra[node_ids[left_index]],
+                    spectra[node_ids[right_index]],
+                    float(mz_tolerance),
+                )
+                if matched >= int(minimum_matched_peaks):
+                    rows.append(
+                        {
+                            "SourceID": node_ids[left_index],
+                            "TargetID": node_ids[right_index],
+                            "Score": score,
+                            "MatchPeakCount": matched,
+                            "IonMode": ion_mode,
+                        }
+                    )
+            processed_nodes += stop - start
+            yield processed_nodes, total_nodes, len(rows), None
+    result = pd.DataFrame(
+        rows,
+        columns=[*EDGE_COLUMNS, "IonMode"],
+    )
+    yield processed_nodes, total_nodes, len(result), result
 
 
 def read_similarity_edges(path: str | Path) -> pd.DataFrame:

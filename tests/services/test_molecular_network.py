@@ -11,6 +11,7 @@ from massbank_rdf.services.molecular_network import (
     build_cytoscape_tables,
     common_cluster_peaks,
     filter_edges,
+    generate_similarity_edges,
     read_similarity_edges,
     resolve_score_thresholds,
 )
@@ -164,6 +165,31 @@ class MolecularNetworkTest(unittest.TestCase):
         disease_nodes = node_table[node_table["node_type"] == "diseases"]
         self.assertEqual(len(disease_nodes), 2)
         self.assertEqual(set(disease_nodes["cluster_id"]), {"C1", "C2"})
+
+    def test_similarity_edges_are_generated_within_ion_mode(self) -> None:
+        spectra = {
+            "A": ([100.0, 200.0, 300.0], [10.0, 20.0, 30.0]),
+            "B": ([100.005, 200.005, 400.0], [10.0, 20.0, 5.0]),
+            "C": ([100.0, 200.0, 300.0], [10.0, 20.0, 30.0]),
+        }
+        final = None
+        updates = []
+        for processed, total, edge_count, result in generate_similarity_edges(
+            spectra,
+            {"A": "positive", "B": "positive", "C": "negative"},
+            mz_tolerance=0.01,
+            minimum_matched_peaks=2,
+            batch_size=1,
+        ):
+            updates.append((processed, total, edge_count))
+            if result is not None:
+                final = result
+        self.assertIsNotNone(final)
+        self.assertEqual(len(final), 1)
+        self.assertEqual(final.iloc[0]["SourceID"], "A")
+        self.assertEqual(final.iloc[0]["TargetID"], "B")
+        self.assertEqual(int(final.iloc[0]["MatchPeakCount"]), 2)
+        self.assertEqual(updates[-1][0], 3)
 
 
 if __name__ == "__main__":
