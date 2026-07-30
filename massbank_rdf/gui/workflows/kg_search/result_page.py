@@ -37,7 +37,7 @@ def format_search_summary(payload: dict[str, Any]) -> str:
         summary = {}
 
     msp_header = ""
-    if summary.get("workflow") == "msp_kg":
+    if summary.get("workflow") in {"msp_kg", "molecular_network"}:
         msp_header = (
             "[MSP batch]\n"
             f"Records: {summary.get('record_count', '-')}\n"
@@ -51,7 +51,7 @@ def format_search_summary(payload: dict[str, Any]) -> str:
         )
 
     input_peak_summary = ""
-    if summary.get("workflow") != "msp_kg":
+    if summary.get("workflow") not in {"msp_kg", "molecular_network"}:
         input_peak_summary = (
             "[Input peaks]\n"
             f"Peak count: {summary.get('peak_count', '-')}\n"
@@ -69,7 +69,7 @@ def format_search_summary(payload: dict[str, Any]) -> str:
         f"Ion mode filter: "
         f"{'enabled' if summary.get('use_ion_mode', True) else 'disabled'}\n"
         f"Ion mode MSP column: {summary.get('ion_mode_column', 'IONMODE')}\n"
-        if summary.get("workflow") == "msp_kg"
+        if summary.get("workflow") in {"msp_kg", "molecular_network"}
         else (
             f"Ion mode: {summary.get('ion_mode', '-')}\n"
             f"Precursor m/z: {summary.get('precursor_mz', '-')}\n"
@@ -168,6 +168,28 @@ def build_output_archive_loader(
     return load
 
 
+def build_network_result_loader(
+    session_store: TemporarySessionStore,
+    *,
+    session_cookie_name: str,
+):
+    def load(request: gr.Request):
+        session_id = (
+            request.request.cookies.get(session_cookie_name)
+            or request.request.query_params.get("job_id")
+        )
+        payload = session_store.get(session_id) if session_id else None
+        if not isinstance(payload, dict):
+            return [], [], []
+        return (
+            payload.get("network_statistics_df", []),
+            payload.get("network_nodes_df", []),
+            payload.get("network_edges_df", []),
+        )
+
+    return load
+
+
 def create_app(
     session_store: TemporarySessionStore,
     kg_lookup_service: Any | None = None,
@@ -215,6 +237,15 @@ def create_app(
         session_cookie_name=session_cookie_name,
     )
     is_msp_workflow = session_cookie_name == "msp_kg_session_id"
+    is_batch_workflow = preload_fn is not None
+    is_network_workflow = session_cookie_name == "molecular_network_session_id"
+    load_network_result = (
+        build_network_result_loader(
+            session_store, session_cookie_name=session_cookie_name
+        )
+        if is_network_workflow
+        else None
+    )
     ask_result = (
         build_result_chat_handler(
             session_store,
@@ -272,7 +303,7 @@ def create_app(
             raise gr.Error(
                 "Batch processing is not complete. Result tabs were not loaded."
             )
-        if is_msp_workflow and not payload.get("output_archive"):
+        if is_batch_workflow and not payload.get("output_archive"):
             raise gr.Error(
                 "Batch processing finished without an output archive."
             )
@@ -355,6 +386,26 @@ def create_app(
                         interactive=False,
                     )
 
+                if is_network_workflow:
+                    with gr.Tab("Network conditions", id="network-conditions"):
+                        network_statistics = gr.Dataframe(
+                            label="Network condition comparison",
+                            interactive=False,
+                            wrap=True,
+                        )
+                    with gr.Tab("Cytoscape nodes", id="cytoscape-nodes"):
+                        network_nodes = gr.Dataframe(
+                            label="node.tsv preview",
+                            interactive=False,
+                            wrap=True,
+                        )
+                    with gr.Tab("Cytoscape edges", id="cytoscape-edges"):
+                        network_edges = gr.Dataframe(
+                            label="edge.tsv preview",
+                            interactive=False,
+                            wrap=True,
+                        )
+
                 with gr.Tab("Interpretation", id="interpretation"):
                     (
                         interpretation_status_text,
@@ -400,7 +451,7 @@ def create_app(
                 """.format(input_path=input_path)
             )
 
-            if is_msp_workflow:
+            if is_batch_workflow:
                 load_event = app.load(
                     fn=preload_fn,
                     inputs=[],
@@ -427,7 +478,7 @@ def create_app(
             ).success(
                 fn=(
                     load_massbank_without_tab_switch
-                    if is_msp_workflow
+                    if is_batch_workflow
                     else load_massbank_result
                 ),
                 inputs=[],
@@ -451,10 +502,22 @@ def create_app(
                 inputs=[],
                 outputs=[output_status, output_archive],
                 show_progress="hidden",
-            ).success(
+            )
+            if is_network_workflow:
+                result_load_event = result_load_event.success(
+                    fn=load_network_result,
+                    inputs=[],
+                    outputs=[
+                        network_statistics,
+                        network_nodes,
+                        network_edges,
+                    ],
+                    show_progress="hidden",
+                )
+            result_load_event = result_load_event.success(
                 fn=(
                     load_sparql_without_tab_switch
-                    if is_msp_workflow
+                    if is_batch_workflow
                     else load_sparql_result
                 ),
                 inputs=[],
@@ -475,7 +538,7 @@ def create_app(
             ).success(
                 fn=(
                     load_kg_without_tab_switch
-                    if is_msp_workflow
+                    if is_batch_workflow
                     else load_kg_display_result
                 ),
                 inputs=[],

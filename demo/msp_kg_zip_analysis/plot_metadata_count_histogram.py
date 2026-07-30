@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import shutil
 import tempfile
@@ -15,6 +16,7 @@ import pandas as pd
 
 CANDIDATE_FILE = "massbank_candidates_by_spectrum.csv"
 ANNOTATION_FILE = "spectrum_inchikey_annotations.csv"
+WORKFLOW_CONFIG_FILE = "workflow_config.json"
 MAX_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
 
 
@@ -55,12 +57,27 @@ def _as_boolean(series: pd.Series) -> pd.Series:
     )
 
 
+def minimum_matched_peaks_from_result(result_root: Path) -> int | None:
+    """Read the MassBank minimum matched-peak setting saved in the result."""
+    config_path = result_root / WORKFLOW_CONFIG_FILE
+    if not config_path.is_file():
+        return None
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        value = config.get("search", {}).get("min_matched_peaks")
+        threshold = int(value)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return threshold if threshold > 0 else None
+
+
 def spectrum_metadata_counts(
     result_root: Path,
     *,
     aggregation: str = "top",
+    minimum_peak_count: int | None = None,
 ) -> pd.DataFrame:
-    """Return one KG metadata-count value for every input spectrum."""
+    """Return a KG metadata-count value for every searchable input spectrum."""
     annotation_df = pd.read_csv(result_root / ANNOTATION_FILE)
     try:
         candidate_df = pd.read_csv(result_root / CANDIDATE_FILE)
@@ -73,14 +90,41 @@ def spectrum_metadata_counts(
             f"{ANNOTATION_FILE} is missing required columns: "
             f"{sorted(required_annotations - set(annotation_df.columns))}"
         )
-    spectra = annotation_df[
-        ["spectrum_uid", "source_file", "sample_class"]
-    ].drop_duplicates("spectrum_uid")
+    spectrum_columns = ["spectrum_uid", "source_file", "sample_class"]
+    if "peak_count" in annotation_df:
+        spectrum_columns.append("peak_count")
+    spectra = annotation_df[spectrum_columns].drop_duplicates("spectrum_uid")
+    threshold = (
+        int(minimum_peak_count)
+        if minimum_peak_count is not None
+        else minimum_matched_peaks_from_result(result_root)
+    )
+    input_spectrum_count = len(spectra)
+    excluded_too_few_peaks = 0
+    if threshold is not None and "peak_count" in spectra:
+        peak_counts = pd.to_numeric(spectra["peak_count"], errors="coerce")
+        eligible = peak_counts >= threshold
+        excluded_too_few_peaks = int((~eligible).sum())
+        spectra = spectra.loc[eligible].copy()
+        spectra["peak_count"] = peak_counts.loc[eligible].astype(int)
+
+    def attach_filter_metadata(frame: pd.DataFrame) -> pd.DataFrame:
+        frame.attrs.update(
+            {
+                "input_spectrum_count": input_spectrum_count,
+                "minimum_peak_count": threshold,
+                "excluded_too_few_peaks": excluded_too_few_peaks,
+                "peak_filter_applied": (
+                    threshold is not None and "peak_count" in annotation_df
+                ),
+            }
+        )
+        return frame
 
     required_candidates = {"spectrum_uid", "inchikey", "kg_metadata_count"}
     if candidate_df.empty or not required_candidates.issubset(candidate_df.columns):
         spectra["kg_metadata_count"] = 0.0
-        return spectra
+        return attach_filter_metadata(spectra)
 
     selected = candidate_df.copy()
     if "selected_for_kg" in selected:
@@ -125,7 +169,7 @@ def spectrum_metadata_counts(
     spectra["kg_metadata_count"] = (
         spectra["spectrum_uid"].map(values).fillna(0).astype(float)
     )
-    return spectra
+    return attach_filter_metadata(spectra)
 
 
 def common_bin_edges(
@@ -266,7 +310,17 @@ def write_tables(
         summaries.append(
             {
                 "dataset": label,
+                "input_spectrum_count": frame.attrs.get(
+                    "input_spectrum_count", len(values)
+                ),
                 "spectrum_count": len(values),
+                "minimum_peak_count": frame.attrs.get("minimum_peak_count"),
+                "excluded_too_few_peaks": frame.attrs.get(
+                    "excluded_too_few_peaks", 0
+                ),
+                "peak_filter_applied": frame.attrs.get(
+                    "peak_filter_applied", False
+                ),
                 "mean": values.mean() if len(values) else 0.0,
                 "median": values.median() if len(values) else 0.0,
                 "std": values.std(ddof=1) if len(values) > 1 else 0.0,
@@ -340,6 +394,15 @@ def parse_args() -> argparse.Namespace:
         default="top",
         help="How multiple selected unique InChIKeys represent one spectrum.",
     )
+    parser.add_argument(
+        "--min-peak-count",
+        type=int,
+        default=None,
+        help=(
+            "Override the minimum input-spectrum peak count. By default, "
+            "min_matched_peaks is read from workflow_config.json."
+        ),
+    )
     args = parser.parse_args()
     if not 1 <= len(args.result_zips) <= 2:
         parser.error("Specify one or two result ZIP files.")
@@ -347,6 +410,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--bin-width must be greater than 0.")
     if args.x_max is not None and args.x_max <= 0:
         parser.error("--x-max must be greater than 0.")
+    if args.min_peak_count is not None and args.min_peak_count < 1:
+        parser.error("--min-peak-count must be at least 1.")
     if args.labels and len(args.labels) != len(args.result_zips):
         parser.error("Provide --label exactly once per ZIP, or omit all labels.")
     return args
@@ -373,6 +438,7 @@ def main() -> None:
                 spectrum_metadata_counts(
                     result_root,
                     aggregation=args.aggregation,
+                    minimum_peak_count=args.min_peak_count,
                 )
             )
 

@@ -33,6 +33,12 @@ from .workflows.common_peak_annotation.input_page import create_app as create_co
 from .workflows.common_peak_annotation.result_page import create_app as create_common_peak_result_app
 from .workflows.msp_kg.input_page import create_app as create_msp_kg_input_app
 from .workflows.msp_kg.processor import build_batch_processor
+from .workflows.molecular_network.input_page import (
+    create_app as create_molecular_network_input_app,
+)
+from .workflows.molecular_network.processor import (
+    build_molecular_network_processor,
+)
 
 APP_LAYOUT_STYLES = """
 html,
@@ -219,12 +225,17 @@ def create_server() -> FastAPI:
         ttl_seconds=60 * 60,
     )
     msp_kg_session_store = TemporarySessionStore(ttl_seconds=60 * 60)
+    molecular_network_session_store = TemporarySessionStore(ttl_seconds=60 * 60)
 
     kg_lookup_service = create_kg_lookup_service_from_endpoint_settings(
         timeout=600,
     )
     msp_batch_processor = build_batch_processor(
         msp_kg_session_store,
+        kg_lookup_service,
+    )
+    molecular_network_processor = build_molecular_network_processor(
+        molecular_network_session_store,
         kg_lookup_service,
     )
 
@@ -236,6 +247,9 @@ def create_server() -> FastAPI:
         kg_session_id = request.cookies.get("kg_session_id")
         common_peak_session_id = request.cookies.get("common_peak_session_id")
         msp_kg_session_id = request.cookies.get("msp_kg_session_id")
+        molecular_network_session_id = request.cookies.get(
+            "molecular_network_session_id"
+        )
 
         response = await call_next(request)
 
@@ -266,6 +280,15 @@ def create_server() -> FastAPI:
                 max_age=60 * 60,
             )
 
+        if not molecular_network_session_id:
+            response.set_cookie(
+                key="molecular_network_session_id",
+                value=uuid.uuid4().hex,
+                httponly=True,
+                samesite="lax",
+                max_age=60 * 60,
+            )
+
         return response
 
     @app.get("/kg")
@@ -282,6 +305,36 @@ def create_server() -> FastAPI:
     @app.get("/msp-kg/")
     def redirect_msp_kg():
         return RedirectResponse(url="/msp-kg/input/")
+
+    @app.get("/molecular-network")
+    @app.get("/molecular-network/")
+    def redirect_molecular_network():
+        return RedirectResponse(url="/molecular-network/input/")
+
+    gr.mount_gradio_app(
+        app,
+        _with_app_layout(
+            create_molecular_network_input_app(molecular_network_session_store)
+        ),
+        path="/molecular-network/input",
+        allowed_paths=[str(GUI_ROOT)],
+    )
+
+    gr.mount_gradio_app(
+        app,
+        _with_app_layout(
+            create_kg_result_app(
+                session_store=molecular_network_session_store,
+                kg_lookup_service=kg_lookup_service,
+                session_cookie_name="molecular_network_session_id",
+                workflow_title="MSP Molecular Network + KG",
+                input_path="/molecular-network/input/",
+                preload_fn=molecular_network_processor,
+            )
+        ),
+        path="/molecular-network/result",
+        allowed_paths=[str(GUI_ROOT), str(MSP_JOB_OUTPUT_ROOT)],
+    )
 
     gr.mount_gradio_app(
         app,

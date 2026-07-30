@@ -11,7 +11,18 @@
 `selected_for_kg=True`の候補を最終rank順に並べ、最上位のユニークな
 InChIKeyの`kg_metadata_count`を代表値とする。同じInChIKeyを持つ複数の
 MassBankレコードは1回だけ数える。MassBank/InChIKey annotationがない
-入力スペクトルも除外せず、metadata countを0として含める。
+入力スペクトルもmetadata countを0として含める。ただし、
+`workflow_config.json`の`min_matched_peaks`より入力スペクトル自身の
+`peak_count`が少ない場合、そのスペクトルは原理的に検索条件を満たせないため
+集計から除外する。`peak_count == min_matched_peaks`は一致可能なので残す。
+
+旧ZIPなど、`workflow_config.json`に設定がない場合は手動指定できる。
+
+```bash
+--min-peak-count 6
+```
+
+ZIPの設定が存在する場合も、このオプションを指定すると手動値を優先する。
 
 別の集計も選択できる。
 
@@ -74,7 +85,8 @@ python demo/msp_kg_zip_analysis/plot_metadata_count_histogram.py \
 - `metadata_count_histogram.png`: ヒストグラム
 - `metadata_count_by_spectrum.tsv`: プロットした全スペクトルの値
 - `metadata_count_summary.tsv`: 件数、平均、中央値、標準偏差、最小、最大、
-  metadata count 0のスペクトル数
+  metadata count 0のスペクトル数、元のスペクトル数、peak数不足による
+  除外数、適用した最小peak数
 
 `matplotlib`がない環境では次を実行する。
 

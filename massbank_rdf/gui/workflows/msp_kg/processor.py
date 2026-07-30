@@ -198,6 +198,9 @@ def _write_outputs(
 def build_batch_processor(
     session_store: TemporarySessionStore,
     kg_lookup_service: Any,
+    *,
+    session_cookie_name: str = "msp_kg_session_id",
+    output_name: str = "msp_kg_result",
 ):
     def process(
         request: gr.Request,
@@ -205,7 +208,7 @@ def build_batch_processor(
     ) -> Iterator[tuple[str, str]]:
         yield _progress_output("Preparing MSP batch processing...", 0.0)
         session_id = (
-            request.request.cookies.get("msp_kg_session_id")
+            request.request.cookies.get(session_cookie_name)
             or request.request.query_params.get("job_id")
         )
         payload = session_store.get(session_id) if session_id else None
@@ -222,7 +225,6 @@ def build_batch_processor(
         job = payload.get("msp_batch_job")
         if not isinstance(job, dict):
             raise gr.Error("MSP batch settings were not found.")
-        output_name = "msp_kg_result"
         job_root = (
             Path(tempfile.gettempdir())
             / "massbank_rdf_msp_jobs"

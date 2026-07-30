@@ -23,11 +23,13 @@ class TestMspKgZipHistogram(unittest.TestCase):
                     "spectrum_uid": "sample::1",
                     "source_file": "sample.msp",
                     "sample_class": "Class1",
+                    "peak_count": 10,
                 },
                 {
                     "spectrum_uid": "sample::2",
                     "source_file": "sample.msp",
                     "sample_class": "Class1",
+                    "peak_count": 2,
                 },
             ]
         )
@@ -71,12 +73,19 @@ class TestMspKgZipHistogram(unittest.TestCase):
                     "spectrum_inchikey_annotations.csv",
                     annotations.to_csv(index=False),
                 )
+                archive.writestr(
+                    "workflow_config.json",
+                    '{"search": {"min_matched_peaks": 6}}',
+                )
             extracted = extract_result_zip(archive_path, root / "extracted")
             top = spectrum_metadata_counts(extracted, aggregation="top")
             summed = spectrum_metadata_counts(extracted, aggregation="sum")
 
-        self.assertEqual(top["kg_metadata_count"].tolist(), [10.0, 0.0])
-        self.assertEqual(summed["kg_metadata_count"].tolist(), [40.0, 0.0])
+        self.assertEqual(top["kg_metadata_count"].tolist(), [10.0])
+        self.assertEqual(summed["kg_metadata_count"].tolist(), [40.0])
+        self.assertEqual(top.attrs["input_spectrum_count"], 2)
+        self.assertEqual(top.attrs["excluded_too_few_peaks"], 1)
+        self.assertEqual(top.attrs["minimum_peak_count"], 6)
 
     def test_plot_histogram_writes_png_when_matplotlib_is_available(self) -> None:
         try:
