@@ -177,6 +177,123 @@ def generate_similarity_edges(
     yield processed_nodes, total_nodes, len(result), result
 
 
+def generate_binned_numpy_similarity_edges(
+    spectra: dict[str, tuple[Iterable[float], Iterable[float]]],
+    ion_modes: dict[str, str],
+    *,
+    mz_tolerance: float,
+    minimum_matched_peaks: int,
+    batch_size: int = 500,
+):
+    """Yield fast binned cosine edges using one NumPy conversion and sparse GEMM.
+
+    This CLI-oriented approximation bins peaks at `2 * mz_tolerance`, sums
+    intensities within bins, L2-normalizes rows, and calculates all cosine
+    scores and shared-bin counts with sparse matrix multiplication.
+    """
+    if mz_tolerance <= 0:
+        raise ValueError("m/z tolerance must be greater than zero.")
+    if minimum_matched_peaks < 1:
+        raise ValueError("Minimum matched peaks must be at least one.")
+    if batch_size < 1:
+        raise ValueError("Batch size must be at least one.")
+    bin_width = 2.0 * float(mz_tolerance)
+    # Convert every spectrum once. All later scoring uses these NumPy arrays.
+    numpy_spectra = {
+        node_id: (
+            np.asarray(tuple(mz_values), dtype=np.float64),
+            np.asarray(tuple(intensity_values), dtype=np.float64),
+        )
+        for node_id, (mz_values, intensity_values) in spectra.items()
+    }
+    grouped: dict[str, list[str]] = {}
+    for node_id in numpy_spectra:
+        mode = str(ion_modes.get(node_id, "")).strip()
+        if mode:
+            grouped.setdefault(mode, []).append(node_id)
+    total_nodes = sum(map(len, grouped.values()))
+    processed_nodes = 0
+    rows: list[dict[str, Any]] = []
+    for ion_mode, node_ids in grouped.items():
+        if len(node_ids) < 2:
+            processed_nodes += len(node_ids)
+            yield processed_nodes, total_nodes, len(rows), None
+            continue
+        row_indices: list[np.ndarray] = []
+        bin_indices: list[np.ndarray] = []
+        intensity_values: list[np.ndarray] = []
+        maximum_bin = 0
+        for row_index, node_id in enumerate(node_ids):
+            mz, intensity = numpy_spectra[node_id]
+            valid = np.isfinite(mz) & np.isfinite(intensity) & (intensity > 0)
+            bins = np.rint(mz[valid] / bin_width).astype(np.int64)
+            values = intensity[valid]
+            if bins.size:
+                maximum_bin = max(maximum_bin, int(bins.max()))
+                row_indices.append(
+                    np.full(bins.size, row_index, dtype=np.int64)
+                )
+                bin_indices.append(bins)
+                intensity_values.append(values)
+        if not row_indices:
+            processed_nodes += len(node_ids)
+            yield processed_nodes, total_nodes, len(rows), None
+            continue
+        row_array = np.concatenate(row_indices)
+        bin_array = np.concatenate(bin_indices)
+        value_array = np.concatenate(intensity_values)
+        intensity_matrix = sparse.csr_matrix(
+            (value_array, (row_array, bin_array)),
+            shape=(len(node_ids), maximum_bin + 1),
+            dtype=np.float64,
+        )
+        intensity_matrix.sum_duplicates()
+        binary_matrix = intensity_matrix.copy()
+        binary_matrix.data[:] = 1
+        norms = np.sqrt(
+            np.asarray(intensity_matrix.multiply(intensity_matrix).sum(axis=1))
+            .ravel()
+        )
+        inverse_norms = np.divide(
+            1.0,
+            norms,
+            out=np.zeros_like(norms),
+            where=norms > 0,
+        )
+        normalized = sparse.diags(inverse_norms) @ intensity_matrix
+        for start in range(0, len(node_ids), int(batch_size)):
+            stop = min(start + int(batch_size), len(node_ids))
+            shared = (binary_matrix[start:stop] @ binary_matrix.T).tocoo()
+            keep = (
+                (shared.data >= int(minimum_matched_peaks))
+                & ((start + shared.row) < shared.col)
+            )
+            local_rows = shared.row[keep].astype(np.int64)
+            target_rows = shared.col[keep].astype(np.int64)
+            match_counts = shared.data[keep].astype(np.int64)
+            if local_rows.size:
+                score_matrix = normalized[start:stop] @ normalized.T
+                scores = np.asarray(
+                    score_matrix[local_rows, target_rows]
+                ).ravel()
+                rows.extend(
+                    {
+                        "SourceID": node_ids[start + int(local)],
+                        "TargetID": node_ids[int(target)],
+                        "Score": float(score),
+                        "MatchPeakCount": int(match_count),
+                        "IonMode": ion_mode,
+                    }
+                    for local, target, score, match_count in zip(
+                        local_rows, target_rows, scores, match_counts
+                    )
+                )
+            processed_nodes += stop - start
+            yield processed_nodes, total_nodes, len(rows), None
+    result = pd.DataFrame(rows, columns=[*EDGE_COLUMNS, "IonMode"])
+    yield processed_nodes, total_nodes, len(result), result
+
+
 def read_similarity_edges(path: str | Path) -> pd.DataFrame:
     """Read and validate a tab- or comma-separated similarity edge table."""
     path = Path(path)
@@ -380,6 +497,7 @@ def analyze_conditions(
     match_peak_counts: Iterable[int],
     resolutions: Iterable[float],
     random_seed: int = 42,
+    progress_callback: Any | None = None,
 ) -> tuple[pd.DataFrame, dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
     """Evaluate a full parameter grid and return statistics and assignments."""
     nodes = list(dict.fromkeys(map(str, all_node_ids)))
@@ -387,9 +505,12 @@ def analyze_conditions(
     stats: list[dict[str, Any]] = []
     assignments: dict[str, pd.DataFrame] = {}
     filtered_edges: dict[str, pd.DataFrame] = {}
-    for (threshold, score_label), top_k, match_count, resolution in product(
+    combinations = list(product(
         resolved_scores, top_k_values, match_peak_counts, resolutions
-    ):
+    ))
+    for condition_index, (
+        (threshold, score_label), top_k, match_count, resolution
+    ) in enumerate(combinations, start=1):
         condition = NetworkCondition(
             threshold, score_label, top_k, int(match_count), float(resolution),
             int(random_seed),
@@ -437,6 +558,12 @@ def analyze_conditions(
         node_frame.insert(0, "condition_id", condition.condition_id)
         assignments[condition.condition_id] = node_frame
         filtered_edges[condition.condition_id] = selected
+        if progress_callback is not None:
+            progress_callback(
+                condition_index,
+                len(combinations),
+                condition.condition_id,
+            )
     return pd.DataFrame(stats), assignments, filtered_edges
 
 

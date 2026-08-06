@@ -12,6 +12,7 @@ from massbank_rdf.services.molecular_network import (
     common_cluster_peaks,
     filter_edges,
     generate_similarity_edges,
+    generate_binned_numpy_similarity_edges,
     read_similarity_edges,
     resolve_score_thresholds,
 )
@@ -190,6 +191,27 @@ class MolecularNetworkTest(unittest.TestCase):
         self.assertEqual(final.iloc[0]["TargetID"], "B")
         self.assertEqual(int(final.iloc[0]["MatchPeakCount"]), 2)
         self.assertEqual(updates[-1][0], 3)
+
+    def test_numpy_binned_similarity_uses_matrix_scoring(self) -> None:
+        spectra = {
+            "A": ([100.0, 200.0, 300.0], [10.0, 20.0, 30.0]),
+            "B": ([100.005, 200.005, 300.005], [10.0, 20.0, 30.0]),
+            "C": ([100.0, 200.0, 300.0], [10.0, 20.0, 30.0]),
+        }
+        result = None
+        for _, _, _, frame in generate_binned_numpy_similarity_edges(
+            spectra,
+            {"A": "POSITIVE", "B": "POSITIVE", "C": "NEGATIVE"},
+            mz_tolerance=0.01,
+            minimum_matched_peaks=3,
+            batch_size=1,
+        ):
+            if frame is not None:
+                result = frame
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(int(result.iloc[0]["MatchPeakCount"]), 3)
+        self.assertAlmostEqual(float(result.iloc[0]["Score"]), 1.0)
 
 
 if __name__ == "__main__":

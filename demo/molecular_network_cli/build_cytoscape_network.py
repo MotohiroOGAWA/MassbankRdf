@@ -68,6 +68,7 @@ def load_msp_files(
     *,
     ion_mode_column: str,
     class_assignments: dict[str, str],
+    progress_callback: Any | None = None,
 ) -> tuple[
     pd.DataFrame,
     dict[str, tuple[list[float], list[float]]],
@@ -120,6 +121,13 @@ def load_msp_files(
             )
             if name:
                 aliases.setdefault(str(name), []).append(node_id)
+        if progress_callback is not None:
+            progress_callback(
+                file_number,
+                len(paths),
+                path.name,
+                readable_index,
+            )
     if not rows:
         raise ValueError("No readable MSP spectra were found.")
     alias_map = {node_id: node_id for node_id in spectra}
