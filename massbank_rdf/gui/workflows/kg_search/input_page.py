@@ -10,6 +10,9 @@ import json
 
 from massbank_rdf.gui.session_store import TemporarySessionStore
 from massbank_rdf.db.massbank.database import MassBankDatabase
+from massbank_rdf.gui.workflows.shared.candidate_ranking_panel import (
+    create_minimum_similarity_input,
+)
 
 
 EXAMPLE_SEARCH_QUERY_PATH = (
@@ -63,6 +66,7 @@ def _load_example_search_query_values():
         int(data.get("top_n", 10)),
         float(data.get("mz_tolerance", 0.01)),
         int(data.get("min_matched_peaks", 1)),
+        float(data.get("minimum_similarity", 0.5)),
         data.get("ion_mode", ""),
         data.get("precursor_mz", None),
         data.get("precursor_tolerance", None),
@@ -194,6 +198,7 @@ def create_app(
         top_n: int,
         mz_tolerance: float,
         min_matched_peaks: int,
+        minimum_similarity: float,
         ion_mode: str,
         precursor_mz: float | None,
         precursor_tolerance: float | None,
@@ -241,6 +246,10 @@ def create_app(
             precursor_mz=precursor_mz,
             precursor_tolerance=precursor_tolerance,
         )
+        result_df = result_df.loc[
+            pd.to_numeric(result_df["cosine_score"], errors="coerce")
+            > float(minimum_similarity)
+        ].copy()
 
 
         payload = {
@@ -253,6 +262,7 @@ def create_app(
                 "top_n": int(top_n),
                 "mz_tolerance": float(mz_tolerance),
                 "min_matched_peaks": int(min_matched_peaks),
+                "minimum_similarity": float(minimum_similarity),
                 "ion_mode": normalized_ion_mode or "-",
                 "precursor_mz": precursor_mz if precursor_mz is not None else "-",
                 "precursor_tolerance": (
@@ -343,6 +353,8 @@ def create_app(
                         precision=0,
                         minimum=1,
                     )
+
+                    minimum_similarity = create_minimum_similarity_input()
 
                 with gr.Row():
                     ion_mode = gr.Dropdown(
@@ -461,6 +473,7 @@ def create_app(
                     top_n,
                     mz_tolerance,
                     min_matched_peaks,
+                    minimum_similarity,
                     ion_mode,
                     precursor_mz,
                     precursor_tolerance,
@@ -475,6 +488,7 @@ def create_app(
                     top_n,
                     mz_tolerance,
                     min_matched_peaks,
+                    minimum_similarity,
                     ion_mode,
                     precursor_mz,
                     precursor_tolerance,

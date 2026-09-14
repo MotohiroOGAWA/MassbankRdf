@@ -125,7 +125,10 @@ def build_kg_display_loader(
         str | None,
         gr.update,
     ]:
-        session_id = request.request.cookies.get(session_cookie_name)
+        session_id = (
+            request.request.cookies.get(session_cookie_name)
+            or request.request.query_params.get("job_id")
+        )
 
         if not session_id:
             return (

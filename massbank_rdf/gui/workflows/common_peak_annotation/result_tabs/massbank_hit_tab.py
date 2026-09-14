@@ -240,6 +240,7 @@ def build_massbank_hit_loader(
             common_peak_n = int(summary.get("common_peak_n", 10))
             massbank_top_n = int(summary.get("massbank_top_n", 50))
             min_matched_peaks = int(summary.get("min_matched_peaks", 1))
+            minimum_similarity = float(summary.get("minimum_similarity", 0.5))
         except (TypeError, ValueError):
             return (
                 make_empty_massbank_hit_dataframe(),
@@ -261,6 +262,7 @@ def build_massbank_hit_loader(
             max_massbank_inchikey=max_massbank_inchikey,
             massbank_top_n=massbank_top_n,
             min_matched_peaks=min_matched_peaks,
+            minimum_similarity=minimum_similarity,
             ion_mode=ion_mode,
         )
 

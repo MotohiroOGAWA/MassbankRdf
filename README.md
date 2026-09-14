@@ -53,7 +53,42 @@ This workflow extracts product-ion peaks shared by multiple spectra and uses the
 - Annotate common m/z values with MassBank hits
 - Run KG lookup and optional LLM interpretation
 
-Both workflows provide a `Load Example` button for quickly checking the expected input format and basic behavior.
+The workflows provide a `Load Example` button for quickly checking the expected input format and basic behavior.
+
+### MSP Knowledge Graph Annotation
+
+This workflow accepts multiple `.msp` files, reads all valid
+spectra, and searches MassBank separately for every spectrum. It selects up to
+the configured number of candidate InChIKeys per spectrum, de-duplicates them
+across the complete MSP file, and enriches them with PubChem, HMDB, and
+KNApSAcK evidence in chunks. `Ion_mode` and `PrecursorMZ` are automatically
+taken from each MSP record when available. The GUI reports progress separately
+for the MassBank and KG stages.
+
+Multiple MSP files can be uploaded together. Assign a sample class such as
+`PR` or `WT` to every file before running. Because the GUI runs on a server, it
+cannot directly write to an arbitrary client path such as `D:\...`. The
+complete result is automatically packaged as `msp_kg_result.zip` in the Output
+tab; use the browser save dialog to store it on the client PC. The browser MassBank table is
+aggregated by MassBank record and reports how many spectra and files were
+assigned to each record. Detailed spectrum-level results remain available in
+the local output:
+
+```text
+massbank_candidates_by_spectrum.csv
+spectrum_inchikey_annotations.csv
+massbank_record_summary.csv
+class_inchikey_kg_analysis.csv
+kg_evidence.json
+sparql/*.sparql
+summary.json
+```
+
+`class_inchikey_kg_analysis.csv` reports class and other-class prevalence,
+enrichment ratio, Fisher exact p-value when SciPy is available, and the KG
+entity summary for each InChIKey. During MassBank processing, `checkpoint.pkl`
+is updated every 25 spectra. Enable `Resume from checkpoint` with the same
+files, classes, settings, and output directory to continue an interrupted run.
 
 ## Quick start with Docker
 
@@ -87,6 +122,14 @@ Open the following URL in a browser:
 
 ```text
 http://localhost:7865
+```
+
+The GUI container runs in development auto-reload mode by default. Changes
+under `mnt/app/massbank_rdf/` restart the Uvicorn/Gradio process automatically.
+The browser may need a refresh after the restart. To disable auto-reload:
+
+```bash
+GUI_RELOAD=0 ./env/create_gui_container.sh
 ```
 
 To use a different port, set `GUI_PORT` when starting the container:
@@ -132,6 +175,8 @@ The main dependencies are defined in `env/Dockerfile` and `env/requirements.txt`
 | `/kg/result/` | Knowledge Graph Search result page |
 | `/common-peak/input/` | Common Peak Annotation input page |
 | `/common-peak/result/` | Common Peak Annotation result page |
+| `/msp-kg/input/` | MSP Knowledge Graph Annotation input page |
+| `/msp-kg/result/` | MSP Knowledge Graph Annotation result page |
 
 `/kg/` and `/common-peak/` redirect to their respective input pages.
 

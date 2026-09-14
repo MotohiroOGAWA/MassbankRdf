@@ -183,6 +183,11 @@ class KgDatabase:
             self._upsert_massbank_inchikey_summary(session, summary_df, queried_at=queried_at)
             session.commit()
 
+        # KG metadata scores are derived from the normalized relationship
+        # tables and must be rebuilt lazily after an import.
+        with self.engine.begin() as conn:
+            conn.exec_driver_sql("DROP TABLE IF EXISTS kg_metadata_scores")
+
     def import_kg_dataframes(
         self,
         data: dict[str, pd.DataFrame],
@@ -249,6 +254,9 @@ class KgDatabase:
             )
 
             session.commit()
+
+        with self.engine.begin() as conn:
+            conn.exec_driver_sql("DROP TABLE IF EXISTS kg_metadata_scores")
 
     def inchikeys_to_dataframe(self) -> pd.DataFrame:
         stmt = select(KgInchikey).order_by(KgInchikey.inchikey)
