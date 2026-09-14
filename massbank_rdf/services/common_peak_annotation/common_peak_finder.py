@@ -20,16 +20,26 @@ def find_common_peaks(
     records: list[PeakRecord],
     *,
     mz_tolerance: float,
+    minimum_relative_intensity: float = 0.0,
 ) -> pd.DataFrame:
     """Find common m/z peaks across multiple records.
 
-    Peaks are grouped by m/z tolerance.
+    Peaks below the per-record relative intensity threshold are removed first.
+    A zero threshold disables filtering. Peaks are grouped by m/z tolerance.
     The output is sorted by record_count desc.
     """
+    if not 0 <= minimum_relative_intensity <= 1:
+        raise ValueError("Minimum relative intensity must be between 0 and 1.")
+
     peak_rows: list[dict[str, Any]] = []
 
     for record in records:
+        maximum = max((intensity for _, intensity in record.peaks), default=0.0)
         for peak_index, (mz, intensity) in enumerate(record.peaks):
+            if minimum_relative_intensity > 0 and (
+                maximum <= 0 or intensity / maximum < minimum_relative_intensity
+            ):
+                continue
             peak_rows.append(
                 {
                     "record_index": record.record_index,

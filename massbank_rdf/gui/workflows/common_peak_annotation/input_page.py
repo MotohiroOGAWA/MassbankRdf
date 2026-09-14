@@ -96,6 +96,7 @@ def _records_to_peak_text(
 def _load_example_common_peak_values() -> tuple[
     str,
     float,
+    float,
     int,
     int | None,
     int,
@@ -116,6 +117,7 @@ def _load_example_common_peak_values() -> tuple[
     return (
         peak_text,
         float(data.get("mz_tolerance", 0.01)),
+        float(data.get("minimum_relative_intensity", 0.05)),
         int(data.get("common_peak_n", 10)),
         data.get("max_massbank_inchikey", None),
         int(data.get("massbank_top_n", 50)),
@@ -213,6 +215,7 @@ def create_app(
     def _run_and_save(
         peak_text: str,
         mz_tolerance: float,
+        minimum_relative_intensity: float,
         common_peak_n: int,
         max_massbank_inchikey: int | float | None,
         massbank_top_n: int,
@@ -234,6 +237,8 @@ def create_app(
             raise gr.Error("Session ID was not found.")
 
         _validate_peak_text(peak_text)
+        if minimum_relative_intensity is None or not 0 <= minimum_relative_intensity <= 1:
+            raise gr.Error("Minimum relative intensity must be between 0 and 1.")
 
         max_massbank_inchikey_value = normalize_optional_positive_int(
             max_massbank_inchikey
@@ -249,6 +254,7 @@ def create_app(
             },
             "summary": {
                 "mz_tolerance": float(mz_tolerance),
+                "minimum_relative_intensity": float(minimum_relative_intensity),
                 "common_peak_n": int(common_peak_n),
                 "max_massbank_inchikey": (
                     max_massbank_inchikey_value
@@ -332,6 +338,15 @@ def create_app(
                     minimum=0,
                 )
 
+                minimum_relative_intensity = gr.Number(
+                    label="Minimum relative intensity",
+                    value=0.05,
+                    minimum=0,
+                    maximum=1,
+                    info="Relative to each record's maximum intensity. "
+                    "0.05 removes peaks below 5%; 0 disables filtering.",
+                )
+
                 common_peak_n = gr.Number(
                     label="Common peak N",
                     value=10,
@@ -392,6 +407,7 @@ def create_app(
                 outputs=[
                     peak_text,
                     mz_tolerance,
+                    minimum_relative_intensity,
                     common_peak_n,
                     max_massbank_inchikey,
                     massbank_top_n,
@@ -406,6 +422,7 @@ def create_app(
                 inputs=[
                     peak_text,
                     mz_tolerance,
+                    minimum_relative_intensity,
                     common_peak_n,
                     max_massbank_inchikey,
                     massbank_top_n,
