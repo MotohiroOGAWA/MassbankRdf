@@ -1,0 +1,275 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from massbank_rdf.db.massbank.database import MassBankDatabase
+
+from demo.llm_interpretation_input.demo_input_builder import (
+    DEFAULT_PATHWAY_PER_INCHIKEY_LIMIT,
+    KG_TABLE_KEYS,
+    build_kg_evidence_with_pathway_limit,
+    reshape_kg_evidence_for_llm,
+)
+from massbank_rdf.services.llm_interpretation import build_kg_evidence_from_kg_data
+from massbank_rdf.models import MSPRecord
+
+def _build_kg_lookup_service():
+    from massbank_rdf.gui.settings.endpoint_settings import (
+        create_kg_lookup_service_from_endpoint_settings,
+    )
+
+    return create_kg_lookup_service_from_endpoint_settings()
+
+
+def build_demo_data_from_msp_file(
+    input_file: str | Path,
+    output_dir: str | Path,
+    *,
+    run_kg_lookup: bool = True,
+    top_n: int = 10,
+    mz_tolerance: float = 0.01,
+    min_matched_peaks: int = 1,
+    kg_n: int = 3,
+    kg_limit: int | None = 100,
+    precursor_tolerance: float | None = None,
+    pathway_per_inchikey_limit: int = DEFAULT_PATHWAY_PER_INCHIKEY_LIMIT,
+) -> dict[str, Any]:
+    """Build and save demo input data from one MSP record.
+
+    Saved outputs include:
+    - MSP metadata as pandas DataFrame and peaks as numpy array
+    - MassBank search result records as pandas DataFrame
+    - KG lookup result as compact JSON evidence
+    - an LLM-friendly reshaped view of the KG evidence
+    """
+    input_path = Path(input_file).resolve()
+    output_path = Path(output_dir).resolve()
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    msp_record = MSPRecord.from_msp_file(input_path)
+    msp_manifest = msp_record.save(output_path / "msp_record")
+
+    precursor_mz = _optional_float(msp_record.get_metadata_value("PrecursorMZ"))
+    ion_mode = msp_record.get_metadata_value("Ion_mode")
+
+    db = MassBankDatabase()
+    massbank_records = db.search_records_by_cosine_similarity_sql_dataframe(
+        mz_list=msp_record.mz_list,
+        intensity_list=msp_record.intensity_list,
+        top_n=top_n,
+        mz_tolerance=mz_tolerance,
+        min_matched_peaks=min_matched_peaks,
+        ion_mode=ion_mode,
+        precursor_mz=precursor_mz,
+        precursor_tolerance=precursor_tolerance,
+    )
+    massbank_manifest = _save_dataframe(
+        massbank_records,
+        output_path / "massbank_records",
+    )
+
+    if run_kg_lookup:
+        kg_lookup_service = _build_kg_lookup_service()
+        kg_evidence = build_kg_evidence_with_pathway_limit(
+            kg_lookup_service,
+            massbank_records,
+            inchikey_column="inchikey",
+            top_n=top_n,
+            kg_n=kg_n,
+            limit=kg_limit,
+            pathway_per_inchikey_limit=pathway_per_inchikey_limit,
+        )
+    else:
+        kg_evidence = build_kg_evidence_from_kg_data(_empty_kg_tables())
+    kg_manifest = _save_json(
+        kg_evidence,
+        output_path / "kg_evidence.json",
+    )
+
+    kg_evidence_llm = reshape_kg_evidence_for_llm(
+        kg_evidence,
+        massbank_records,
+        inchikey_column="inchikey",
+    )
+    kg_llm_manifest = _save_json(
+        kg_evidence_llm,
+        output_path / "llm_ready_evidence.json",
+    )
+    _remove_stale_kg_table_files(output_path / "kg_tables")
+
+    manifest = {
+        "input_file": str(input_path),
+        "output_dir": str(output_path),
+        "search_parameters": {
+            "top_n": int(top_n),
+            "mz_tolerance": float(mz_tolerance),
+            "min_matched_peaks": int(min_matched_peaks),
+            "ion_mode": ion_mode,
+            "precursor_mz": precursor_mz,
+            "precursor_tolerance": precursor_tolerance,
+            "kg_n": int(kg_n),
+            "kg_limit": kg_limit,
+            "pathway_per_inchikey_limit": int(pathway_per_inchikey_limit),
+            "run_kg_lookup": bool(run_kg_lookup),
+        },
+        "msp_record": msp_manifest,
+        "massbank_records": massbank_manifest,
+        "kg_evidence": kg_manifest,
+        "kg_evidence_llm": kg_llm_manifest,
+    }
+
+    manifest_path = output_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    print(f"input: {input_path}")
+    print(f"output_dir: {output_path}")
+    print(f"msp_peaks: {msp_record.peaks.shape[0]}")
+    print(f"massbank_records: {len(massbank_records)}")
+    print(f"kg_lookup: {'enabled' if run_kg_lookup else 'disabled'}")
+    print(f"pathway_per_inchikey_limit: {pathway_per_inchikey_limit}")
+    print(f"kg_evidence: {kg_manifest['json']}")
+    print(f"llm_ready_evidence: {kg_llm_manifest['json']}")
+    print(f"manifest: {manifest_path}")
+
+    return manifest
+
+
+def _save_dataframe(
+    df: pd.DataFrame,
+    path_without_suffix: str | Path,
+) -> dict[str, Any]:
+    base_path = Path(path_without_suffix)
+    base_path.parent.mkdir(parents=True, exist_ok=True)
+
+    for stale_path in [
+        base_path.with_suffix(".pkl"),
+        base_path.with_suffix(".csv"),
+    ]:
+        stale_path.unlink(missing_ok=True)
+
+    tsv_path = base_path.with_suffix(".tsv")
+    df.to_csv(tsv_path, sep="\t", index=False)
+
+    return {
+        "tsv": str(tsv_path),
+        "rows": int(len(df)),
+        "columns": list(df.columns),
+    }
+
+
+def _save_json(
+    data: dict[str, Any],
+    path: str | Path,
+) -> dict[str, Any]:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    features = data.get("features", [])
+    return {
+        "json": str(output_path),
+        "features": len(features) if isinstance(features, list) else 0,
+    }
+
+
+def _remove_stale_kg_table_files(
+    output_dir: str | Path,
+) -> None:
+    base_dir = Path(output_dir)
+    for key in KG_TABLE_KEYS:
+        for suffix in [".tsv", ".csv", ".pkl"]:
+            (base_dir / f"{key}{suffix}").unlink(missing_ok=True)
+
+
+def _empty_kg_tables() -> dict[str, pd.DataFrame]:
+    return {
+        key: pd.DataFrame()
+        for key in KG_TABLE_KEYS
+    }
+
+
+def _optional_float(
+    value: Any,
+) -> float | None:
+    if value in (None, ""):
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Build demo input files from one MSP record.",
+    )
+    parser.add_argument(
+        "--input-file",
+        required=True,
+        help="MSP input file path.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Directory where MSP, MassBank, and KG tables are saved.",
+    )
+    parser.add_argument(
+        "--run-kg-lookup",
+        dest="run_kg_lookup",
+        action="store_true",
+        default=True,
+        help="Run real KG/SPARQL lookup using GUI endpoint settings. This is the default.",
+    )
+    parser.add_argument(
+        "--skip-kg-lookup",
+        dest="run_kg_lookup",
+        action="store_false",
+        help="Skip KG/SPARQL lookup and save empty KG tables.",
+    )
+    parser.add_argument("--top-n", type=int, default=10)
+    parser.add_argument("--mz-tolerance", type=float, default=0.01)
+    parser.add_argument("--min-matched-peaks", type=int, default=1)
+    parser.add_argument("--kg-n", type=int, default=3)
+    parser.add_argument("--kg-limit", type=int, default=100)
+    parser.add_argument(
+        "--pathway-limit",
+        type=int,
+        default=DEFAULT_PATHWAY_PER_INCHIKEY_LIMIT,
+        help=(
+            "Maximum number of PubChem pathways fetched per InChIKey. "
+            "Default is 100."
+        ),
+    )
+    parser.add_argument("--precursor-tolerance", type=float, default=None)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    build_demo_data_from_msp_file(
+        input_file=args.input_file,
+        output_dir=args.output_dir,
+        run_kg_lookup=args.run_kg_lookup,
+        top_n=args.top_n,
+        mz_tolerance=args.mz_tolerance,
+        min_matched_peaks=args.min_matched_peaks,
+        kg_n=args.kg_n,
+        kg_limit=args.kg_limit,
+        precursor_tolerance=args.precursor_tolerance,
+        pathway_per_inchikey_limit=args.pathway_limit,
+    )
+
+
+if __name__ == "__main__":
+    main()

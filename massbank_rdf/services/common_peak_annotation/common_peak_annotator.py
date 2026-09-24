@@ -6,6 +6,11 @@ import numpy as np
 import pandas as pd
 
 from massbank_rdf.db.massbank.database import MassBankDatabase
+from massbank_rdf.services.kg.candidate_ranking import (
+    filter_similarity_candidates,
+    rank_candidates_with_kg_metadata,
+)
+from massbank_rdf.services.kg.metadata_score_service import KgMetadataScoreService
 
 
 def normalize_optional_positive_int(
@@ -43,6 +48,7 @@ def annotate_common_peaks_with_massbank(
     max_massbank_inchikey: int | None = None,
     massbank_top_n: int = 50,
     min_matched_peaks: int = 1,
+    minimum_similarity: float = 0.5,
     ion_mode: str | None = None,
     precursor_mz: float | None = None,
     precursor_tolerance: float | None = None,
@@ -83,6 +89,11 @@ def annotate_common_peaks_with_massbank(
         precursor_mz=precursor_mz,
         precursor_tolerance=precursor_tolerance,
     )
+    massbank_hits = filter_similarity_candidates(
+        massbank_hits,
+        minimum_similarity,
+        score_column="cosine_score",
+    )
 
     if massbank_hits is None or massbank_hits.empty:
         return {
@@ -94,6 +105,10 @@ def annotate_common_peaks_with_massbank(
     massbank_hits = _attach_massbank_records(
         massbank_hits,
         db=db,
+    )
+    massbank_hits = rank_candidates_with_kg_metadata(
+        massbank_hits,
+        KgMetadataScoreService(),
     )
 
     massbank_hits = _limit_hits_by_unique_inchikey(

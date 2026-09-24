@@ -9,6 +9,12 @@ INCHIKEY_PATTERN = re.compile(
     r"[A-Z]{14}-[A-Z]{10}-[A-Z]",
     re.IGNORECASE,
 )
+SHORT_INCHIKEY_PATTERN = re.compile(
+    r"(?<![A-Z])[A-Z]{14}(?![A-Z])",
+    re.IGNORECASE,
+)
+
+SHORT_INCHIKEY_LENGTH = 14
 
 
 def escape_sparql_string(value: str) -> str:
@@ -45,6 +51,35 @@ def normalize_inchikey_values(
 
         if inchikey not in normalized:
             normalized.append(inchikey)
+
+    return normalized
+
+
+def to_short_inchikey(value: str) -> str | None:
+    """Return the 14-character connectivity block of an InChIKey."""
+    inchikey = extract_inchikey_value(value)
+
+    if inchikey is not None:
+        return inchikey[:SHORT_INCHIKEY_LENGTH]
+
+    match = SHORT_INCHIKEY_PATTERN.search(str(value))
+    if match is None:
+        return None
+
+    return match.group(0).upper()
+
+
+def normalize_short_inchikey_values(
+    values: list[str],
+) -> list[str]:
+    """Normalize, shorten, and deduplicate InChIKey values."""
+    normalized: list[str] = []
+
+    for value in values:
+        short_inchikey = to_short_inchikey(value)
+
+        if short_inchikey is not None and short_inchikey not in normalized:
+            normalized.append(short_inchikey)
 
     return normalized
 

@@ -5,6 +5,10 @@ import gradio as gr
 
 from massbank_rdf.db.massbank.database import MassBankDatabase
 from massbank_rdf.gui.session_store import TemporarySessionStore
+from massbank_rdf.services.kg.candidate_ranking import (
+    rank_candidates_with_kg_metadata,
+)
+from massbank_rdf.services.kg.metadata_score_service import KgMetadataScoreService
 
 
 def make_empty_massbank_dataframe() -> pd.DataFrame:
@@ -160,13 +164,18 @@ def create_massbank_tab() -> gr.Dataframe:
 
 def build_massbank_loader(
     session_store: TemporarySessionStore,
+    *,
+    session_cookie_name: str = "kg_session_id",
 ):
     """Build callback for loading MassBank result."""
 
     def _load_massbank_result(
         request: gr.Request,
     ) -> tuple[pd.DataFrame, gr.update]:
-        session_id = request.request.cookies.get("kg_session_id")
+        session_id = (
+            request.request.cookies.get(session_cookie_name)
+            or request.request.query_params.get("job_id")
+        )
 
         if not session_id:
             return (
@@ -196,6 +205,10 @@ def build_massbank_loader(
             result_df = pd.DataFrame(result_df)
 
         formatted_df = format_massbank_result_dataframe(result_df)
+        formatted_df = rank_candidates_with_kg_metadata(
+            formatted_df,
+            KgMetadataScoreService(),
+        )
 
         payload["massbank_display_df"] = formatted_df
         session_store.set(session_id, payload)

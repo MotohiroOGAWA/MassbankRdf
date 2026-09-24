@@ -160,9 +160,11 @@ def _format_common_peak_status(
         f"Common peaks: {len(common_peaks_df)}\n\n"
         "[Common peak annotation settings]\n"
         f"m/z tolerance: {summary.get('mz_tolerance', '-')}\n"
+        f"Minimum relative intensity: {summary.get('minimum_relative_intensity', 0.0)}\n"
         f"Common peak N: {summary.get('common_peak_n', '-')}\n"
         f"Max MassBank InChIKey: {summary.get('max_massbank_inchikey', '-')}\n"
         f"MassBank top N: {summary.get('massbank_top_n', '-')}\n"
+        f"Minimum cosine similarity: {summary.get('minimum_similarity', '-')}\n"
         f"Min matched peaks: {summary.get('min_matched_peaks', '-')}\n"
         f"Ion mode: {summary.get('ion_mode', '-')}"
     )
@@ -234,6 +236,7 @@ def build_common_peak_loader(
         common_peaks_df = find_common_peaks(
             records,
             mz_tolerance=mz_tolerance,
+            minimum_relative_intensity=float(summary.get("minimum_relative_intensity", 0.0)),
         )
 
         # Keep the full DataFrame internally.

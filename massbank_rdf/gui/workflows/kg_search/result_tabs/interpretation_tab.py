@@ -73,6 +73,9 @@ def _format_status(
                 "",
                 "[Overall summary]",
                 f"Overview: {summary.get('overview', '-')}",
+                f"Origin overview: {summary.get('origin_overview', '-')}",
+                "Likely false positives: "
+                + ", ".join(summary.get("likely_false_positives", [])),
             ]
         )
 
@@ -134,7 +137,10 @@ def build_interpretation_loader(
         dict[str, Any],
         str | None,
     ]:
-        session_id = request.request.cookies.get(session_cookie_name)
+        session_id = (
+            request.request.cookies.get(session_cookie_name)
+            or request.request.query_params.get("job_id")
+        )
 
         if not session_id:
             return (
@@ -167,15 +173,19 @@ def build_interpretation_loader(
                 gr.update(selected="interpretation"),
             )
 
+        kg_evidence = payload.get("kg_evidence")
         kg_data = payload.get("kg_data", {})
 
-        if not isinstance(kg_data, dict) or not kg_data:
-            return (
-                "No KG data was found. LLM interpretation was skipped.",
-                make_empty_interpretation_json(),
-                None,
-                gr.update(selected="interpretation"),
-            )
+        if not isinstance(kg_evidence, dict):
+            if isinstance(kg_data, dict) and kg_data:
+                kg_evidence = build_kg_evidence_from_kg_data(kg_data)
+            else:
+                return (
+                    "No KG evidence was found. LLM interpretation was skipped.",
+                    make_empty_interpretation_json(),
+                    None,
+                    gr.update(selected="interpretation"),
+                )
 
         required_keys = [
             "endpoint",
@@ -196,10 +206,6 @@ def build_interpretation_loader(
                 None,
                 gr.update(selected="interpretation"),
             )
-
-        kg_evidence = build_kg_evidence_from_kg_data(
-            kg_data
-        )
 
         interpreter = AzureOpenAIInterpreter(
             AzureOpenAIInterpretationConfig(

@@ -146,8 +146,9 @@ def build_sparql_loader(
       1. Reads MassBank display result from session.
       2. Extracts InChIKeys.
       3. Runs KG lookup with return_query=True.
-      4. Stores kg_data and kg_queries in session.
-      5. Shows generated SPARQL queries in the SPARQL tab.
+      4. Converts KG lookup tables to compact KG evidence JSON.
+      5. Stores kg_evidence and kg_queries in session.
+      6. Shows generated SPARQL queries in the SPARQL tab.
     """
 
     def _load_sparql_and_run_kg(
@@ -160,7 +161,10 @@ def build_sparql_loader(
         str,
         gr.update,
     ]:
-        session_id = request.request.cookies.get(session_cookie_name)
+        session_id = (
+            request.request.cookies.get(session_cookie_name)
+            or request.request.query_params.get("job_id")
+        )
 
         if not session_id:
             return (
@@ -181,6 +185,27 @@ def build_sparql_loader(
                 "",
                 "",
                 "",
+                gr.update(selected="sparql"),
+            )
+
+        if payload.get("kg_precomputed"):
+            inchikeys = payload.get("kg_inchikeys", [])
+            queries = payload.get("kg_queries", {})
+            if not isinstance(inchikeys, list):
+                inchikeys = []
+            if not isinstance(queries, dict):
+                queries = {}
+            status = (
+                "KG lookup was completed during MSP batch processing.\n\n"
+                f"Unique InChIKeys: {len(inchikeys):,}\n"
+                "The queries below are grouped by KG lookup chunk."
+            )
+            return (
+                status,
+                _get_query(queries, "pubchem_compound"),
+                _get_query(queries, "pubchem_pathway"),
+                _get_query(queries, "hmdb"),
+                _get_query(queries, "knapsack_activity"),
                 gr.update(selected="sparql"),
             )
 
@@ -210,6 +235,7 @@ def build_sparql_loader(
             massbank_df,
             max_massbank_inchikey=max_massbank_inchikey,
         )
+        use_short_inchikey = bool(summary.get("use_short_inchikey", False))
 
         if len(inchikeys) == 0:
             return (
@@ -231,6 +257,7 @@ def build_sparql_loader(
             status = (
                 "KG lookup service is not configured yet.\n\n"
                 f"Max MassBank InChIKey for KG: {limit_label}\n"
+                f"InChIKey matching: {'short (connectivity)' if use_short_inchikey else 'full'}\n"
                 "Extracted InChIKeys:\n"
                 + "\n".join(inchikeys)
             )
@@ -247,15 +274,17 @@ def build_sparql_loader(
                 gr.update(selected="sparql"),
             )
 
-        kg_data, kg_queries = kg_lookup_service.search_by_inchikeys(
+        kg_evidence, kg_queries = kg_lookup_service.search_evidence_by_inchikeys(
             inchikeys,
             limit=limit,
             return_query=True,
+            use_short_inchikey=use_short_inchikey,
         )
 
         payload["kg_inchikeys"] = inchikeys
-        payload["kg_data"] = kg_data
+        payload["kg_evidence"] = kg_evidence
         payload["kg_queries"] = kg_queries
+        payload.pop("kg_data", None)
         session_store.set(session_id, payload)
 
         limit_label = (
@@ -267,6 +296,7 @@ def build_sparql_loader(
         status = (
             "SPARQL queries were generated and KG lookup was executed.\n\n"
             f"Max MassBank InChIKey for KG: {limit_label}\n"
+            f"InChIKey matching: {'short (connectivity)' if use_short_inchikey else 'full'}\n"
             f"Used InChIKeys: {', '.join(inchikeys)}"
         )
 

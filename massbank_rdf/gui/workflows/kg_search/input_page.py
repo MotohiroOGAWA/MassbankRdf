@@ -10,6 +10,9 @@ import json
 
 from massbank_rdf.gui.session_store import TemporarySessionStore
 from massbank_rdf.db.massbank.database import MassBankDatabase
+from massbank_rdf.gui.workflows.shared.candidate_ranking_panel import (
+    create_minimum_similarity_input,
+)
 
 
 EXAMPLE_SEARCH_QUERY_PATH = (
@@ -63,6 +66,7 @@ def _load_example_search_query_values():
         int(data.get("top_n", 10)),
         float(data.get("mz_tolerance", 0.01)),
         int(data.get("min_matched_peaks", 1)),
+        float(data.get("minimum_similarity", 0.5)),
         data.get("ion_mode", ""),
         data.get("precursor_mz", None),
         data.get("precursor_tolerance", None),
@@ -194,10 +198,12 @@ def create_app(
         top_n: int,
         mz_tolerance: float,
         min_matched_peaks: int,
+        minimum_similarity: float,
         ion_mode: str,
         precursor_mz: float | None,
         precursor_tolerance: float | None,
         max_massbank_inchikey: int | float | None,
+        use_short_inchikey: bool,
         llm_enabled: bool,
         llm_output_language: str,
         azure_openai_endpoint: str,
@@ -240,6 +246,10 @@ def create_app(
             precursor_mz=precursor_mz,
             precursor_tolerance=precursor_tolerance,
         )
+        result_df = result_df.loc[
+            pd.to_numeric(result_df["cosine_score"], errors="coerce")
+            > float(minimum_similarity)
+        ].copy()
 
 
         payload = {
@@ -252,6 +262,7 @@ def create_app(
                 "top_n": int(top_n),
                 "mz_tolerance": float(mz_tolerance),
                 "min_matched_peaks": int(min_matched_peaks),
+                "minimum_similarity": float(minimum_similarity),
                 "ion_mode": normalized_ion_mode or "-",
                 "precursor_mz": precursor_mz if precursor_mz is not None else "-",
                 "precursor_tolerance": (
@@ -264,6 +275,7 @@ def create_app(
                     if normalized_max_massbank_inchikey is not None
                     else "-"
                 ),
+                "use_short_inchikey": bool(use_short_inchikey),
             },
             "llm_config": {
                 "enabled": bool(llm_enabled),
@@ -342,6 +354,8 @@ def create_app(
                         minimum=1,
                     )
 
+                    minimum_similarity = create_minimum_similarity_input()
+
                 with gr.Row():
                     ion_mode = gr.Dropdown(
                         label="Ion mode",
@@ -375,6 +389,15 @@ def create_app(
                         info=(
                             "Maximum number of unique MassBank InChIKeys used for KG lookup. "
                             "Blank means all unique InChIKeys."
+                        ),
+                    )
+
+                    use_short_inchikey = gr.Checkbox(
+                        label="Connect KG using short InChIKey",
+                        value=False,
+                        info=(
+                            "Match by the first 14-character connectivity block, "
+                            "including stereochemical/protonation variants."
                         ),
                     )
 
@@ -420,11 +443,15 @@ def create_app(
                     )
 
                 llm_user_context = gr.Textbox(
-                    label="Interpretation context",
+                    label="Sample origin / context",
                     lines=5,
                     placeholder=(
-                        "Example: This sample is from palm oil oxidation experiment. "
-                        "Focus on odor-related metabolites and lipid oxidation."
+                        "Example: Colorectal cancer mucosa sample; include known "
+                        "dietary or drug exposure when available."
+                    ),
+                    info=(
+                        "Used to classify compound origin and assess biological "
+                        "plausibility / likely false positives."
                     ),
                 )
 
@@ -446,6 +473,7 @@ def create_app(
                     top_n,
                     mz_tolerance,
                     min_matched_peaks,
+                    minimum_similarity,
                     ion_mode,
                     precursor_mz,
                     precursor_tolerance,
@@ -460,10 +488,12 @@ def create_app(
                     top_n,
                     mz_tolerance,
                     min_matched_peaks,
+                    minimum_similarity,
                     ion_mode,
                     precursor_mz,
                     precursor_tolerance,
                     max_massbank_inchikey,
+                    use_short_inchikey,
                     llm_enabled,
                     llm_output_language,
                     azure_openai_endpoint,

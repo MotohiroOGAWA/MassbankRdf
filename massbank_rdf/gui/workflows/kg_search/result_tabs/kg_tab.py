@@ -2,129 +2,88 @@ from __future__ import annotations
 
 import json
 import tempfile
-import zipfile
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import gradio as gr
 
 from massbank_rdf.gui.session_store import TemporarySessionStore
 
 
-def make_empty_kg_dataframe() -> pd.DataFrame:
-    """Create an empty KG result table."""
-    return pd.DataFrame()
-
-
-def _dataframe_to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
-    """Convert DataFrame to JSON-serializable records."""
-    if df is None or df.empty:
-        return []
-
-    safe_df = df.copy()
-    safe_df = safe_df.where(pd.notnull(safe_df), None)
-
-    return safe_df.to_dict(orient="records")
-
-
-def _get_kg_df(
-    kg_data: dict[str, Any],
-    key: str,
-) -> pd.DataFrame:
-    """Get one KG result DataFrame."""
-    value = kg_data.get(key, pd.DataFrame())
-
-    if isinstance(value, pd.DataFrame):
-        return value
-
-    return pd.DataFrame(value)
-
-
-def _kg_data_to_json_text(
-    kg_data: dict[str, Any],
-    *,
-    inchikeys: list[str] | None = None,
-) -> str:
-    """Convert KG result tables to JSON text."""
-    pubchem_compound_df = _get_kg_df(kg_data, "pubchem_compound")
-    pubchem_pathway_df = _get_kg_df(kg_data, "pubchem_pathway")
-    hmdb_df = _get_kg_df(kg_data, "hmdb")
-    knapsack_activity_df = _get_kg_df(kg_data, "knapsack_activity")
-
-    data = {
-        "inchikeys": inchikeys or [],
-        "pubchem_compound": _dataframe_to_records(pubchem_compound_df),
-        "pubchem_pathway": _dataframe_to_records(pubchem_pathway_df),
-        "hmdb": _dataframe_to_records(hmdb_df),
-        "knapsack_activity": _dataframe_to_records(knapsack_activity_df),
+def make_empty_kg_evidence() -> dict[str, Any]:
+    return {
+        "metadata": {
+            "feature_count": 0,
+        },
+        "features": [],
     }
 
-    return json.dumps(
-        data,
-        ensure_ascii=False,
-        indent=2,
-    )
 
-
-def _write_kg_download_files(
-    kg_data: dict[str, Any],
-    *,
-    inchikeys: list[str] | None = None,
-) -> tuple[str, str]:
-    """Write KG result JSON and CSV zip files for download."""
+def _write_kg_json_file(
+    kg_evidence: dict[str, Any],
+) -> str:
     output_dir = Path(
         tempfile.mkdtemp(prefix="massbank_rdf_kg_")
     )
-
-    json_path = output_dir / "kg_result.json"
-    zip_path = output_dir / "kg_result_csv.zip"
-
-    kg_json_text = _kg_data_to_json_text(
-        kg_data,
-        inchikeys=inchikeys,
-    )
-
+    json_path = output_dir / "kg_evidence.json"
     json_path.write_text(
-        kg_json_text,
+        json.dumps(kg_evidence, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    return str(json_path)
 
-    table_map = {
-        "pubchem_compound": _get_kg_df(kg_data, "pubchem_compound"),
-        "pubchem_pathway": _get_kg_df(kg_data, "pubchem_pathway"),
-        "hmdb": _get_kg_df(kg_data, "hmdb"),
-        "knapsack_activity": _get_kg_df(kg_data, "knapsack_activity"),
+
+def _format_kg_status(
+    kg_evidence: dict[str, Any],
+    *,
+    inchikeys: list[str],
+) -> str:
+    features = kg_evidence.get("features", [])
+    if not isinstance(features, list):
+        features = []
+
+    entity_counts = {
+        "compounds": 0,
+        "pathways": 0,
+        "diseases": 0,
+        "biospecimens": 0,
+        "organisms": 0,
+        "activities": 0,
     }
 
-    with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for name, df in table_map.items():
-            csv_path = output_dir / f"{name}.csv"
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        entities = feature.get("entities", {})
+        if not isinstance(entities, dict):
+            continue
+        for key in entity_counts:
+            value = entities.get(key, [])
+            if isinstance(value, list):
+                entity_counts[key] += len(value)
+            elif isinstance(value, dict):
+                entity_counts[key] += sum(
+                    len(rows)
+                    for rows in value.values()
+                    if isinstance(rows, list)
+                )
 
-            if df is None:
-                df = pd.DataFrame()
-
-            df.to_csv(
-                csv_path,
-                index=False,
-                encoding="utf-8-sig",
-            )
-
-            zf.write(
-                csv_path,
-                arcname=f"{name}.csv",
-            )
-
-    return str(json_path), str(zip_path)
+    return (
+        "KG evidence JSON was loaded from the current browser session.\n\n"
+        f"InChIKeys: {', '.join(inchikeys) if inchikeys else '-'}\n"
+        f"Feature count: {len(features)}\n"
+        f"Compounds: {entity_counts['compounds']}\n"
+        f"Pathways: {entity_counts['pathways']}\n"
+        f"Diseases: {entity_counts['diseases']}\n"
+        f"Biospecimens: {entity_counts['biospecimens']}\n"
+        f"Organisms: {entity_counts['organisms']}\n"
+        f"Activities: {entity_counts['activities']}"
+    )
 
 
 def create_kg_tab() -> tuple[
     gr.Textbox,
-    gr.Dataframe,
-    gr.Dataframe,
-    gr.Dataframe,
-    gr.Dataframe,
-    gr.File,
+    gr.JSON,
     gr.File,
 ]:
     """Create KG tab components."""
@@ -134,53 +93,20 @@ def create_kg_tab() -> tuple[
         interactive=False,
     )
 
-    pubchem_compound_table = gr.Dataframe(
-        label="PubChem compound",
-        value=make_empty_kg_dataframe(),
-        interactive=False,
-        wrap=True,
+    kg_evidence_json = gr.JSON(
+        label="KG evidence JSON",
+        value=make_empty_kg_evidence(),
     )
 
-    pubchem_pathway_table = gr.Dataframe(
-        label="PubChem pathway",
-        value=make_empty_kg_dataframe(),
+    kg_json_file = gr.File(
+        label="Download KG evidence JSON",
         interactive=False,
-        wrap=True,
     )
-
-    hmdb_table = gr.Dataframe(
-        label="HMDB",
-        value=make_empty_kg_dataframe(),
-        interactive=False,
-        wrap=True,
-    )
-
-    knapsack_activity_table = gr.Dataframe(
-        label="KNApSAcK activity",
-        value=make_empty_kg_dataframe(),
-        interactive=False,
-        wrap=True,
-    )
-
-    with gr.Row():
-        kg_json_file = gr.File(
-            label="Download KG JSON",
-            interactive=False,
-        )
-
-        kg_csv_zip_file = gr.File(
-            label="Download KG CSV zip",
-            interactive=False,
-        )
 
     return (
         status_text,
-        pubchem_compound_table,
-        pubchem_pathway_table,
-        hmdb_table,
-        knapsack_activity_table,
+        kg_evidence_json,
         kg_json_file,
-        kg_csv_zip_file,
     )
 
 
@@ -189,30 +115,25 @@ def build_kg_display_loader(
     *,
     session_cookie_name: str = "kg_session_id",
 ):
-    """Build callback for displaying saved KG result."""
+    """Build callback for displaying saved KG evidence JSON."""
 
     def _load_saved_kg_result(
         request: gr.Request,
     ) -> tuple[
         str,
-        pd.DataFrame,
-        pd.DataFrame,
-        pd.DataFrame,
-        pd.DataFrame,
-        str | None,
+        dict[str, Any],
         str | None,
         gr.update,
     ]:
-        session_id = request.request.cookies.get(session_cookie_name)
+        session_id = (
+            request.request.cookies.get(session_cookie_name)
+            or request.request.query_params.get("job_id")
+        )
 
         if not session_id:
             return (
                 "Session ID was not found. Please go back and run search again.",
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                None,
+                make_empty_kg_evidence(),
                 None,
                 gr.update(selected="kg"),
             )
@@ -221,52 +142,27 @@ def build_kg_display_loader(
 
         if payload is None or not isinstance(payload, dict):
             return (
-                "No KG result was found. Please run search again.",
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                make_empty_kg_dataframe(),
-                None,
+                "No KG evidence was found. Please run search again.",
+                make_empty_kg_evidence(),
                 None,
                 gr.update(selected="kg"),
             )
 
-        kg_data = payload.get("kg_data", {})
+        kg_evidence = payload.get("kg_evidence", make_empty_kg_evidence())
         inchikeys = payload.get("kg_inchikeys", [])
 
-        if not isinstance(kg_data, dict):
-            kg_data = {}
+        if not isinstance(kg_evidence, dict):
+            kg_evidence = make_empty_kg_evidence()
 
         if not isinstance(inchikeys, list):
             inchikeys = []
 
-        pubchem_compound_df = _get_kg_df(kg_data, "pubchem_compound")
-        pubchem_pathway_df = _get_kg_df(kg_data, "pubchem_pathway")
-        hmdb_df = _get_kg_df(kg_data, "hmdb")
-        knapsack_activity_df = _get_kg_df(kg_data, "knapsack_activity")
-
-        kg_json_file_path, kg_csv_zip_file_path = _write_kg_download_files(
-            kg_data,
-            inchikeys=inchikeys,
-        )
-
-        status = (
-            "KG result was loaded from the current browser session.\n\n"
-            f"InChIKeys: {', '.join(inchikeys) if inchikeys else '-'}\n"
-            f"PubChem compound rows: {len(pubchem_compound_df)}\n"
-            f"PubChem pathway rows: {len(pubchem_pathway_df)}\n"
-            f"HMDB rows: {len(hmdb_df)}\n"
-            f"KNApSAcK activity rows: {len(knapsack_activity_df)}"
-        )
+        kg_json_file_path = _write_kg_json_file(kg_evidence)
 
         return (
-            status,
-            pubchem_compound_df,
-            pubchem_pathway_df,
-            hmdb_df,
-            knapsack_activity_df,
+            _format_kg_status(kg_evidence, inchikeys=inchikeys),
+            kg_evidence,
             kg_json_file_path,
-            kg_csv_zip_file_path,
             gr.update(selected="kg"),
         )
 

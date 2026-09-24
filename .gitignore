@@ -220,3 +220,11 @@ __marimo__/
 .streamlit/secrets.toml
 
 data/
+
+# Keep database build code while excluding generated databases and data.
+!data/
+data/*
+!data/db/
+data/db/*
+!data/db/build_kg_1nf_sqlite.py
+!data/db/build_short_inchikey_databases.py
