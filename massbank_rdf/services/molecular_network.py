@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from itertools import product
 import math
@@ -297,8 +298,16 @@ def generate_binned_numpy_similarity_edges(
 def read_similarity_edges(path: str | Path) -> pd.DataFrame:
     """Read and validate a tab- or comma-separated similarity edge table."""
     path = Path(path)
-    separator = "\t" if path.suffix.lower() in {".tsv", ".txt"} else ","
-    frame = pd.read_csv(path, sep=separator)
+    with path.open(encoding="utf-8-sig", newline="") as source:
+        header = source.readline()
+    try:
+        separator = csv.Sniffer().sniff(header, delimiters="\t,").delimiter
+    except csv.Error as exc:
+        raise ValueError(
+            "Similarity edge table must contain a tab- or comma-separated header "
+            "with required columns: " + ", ".join(EDGE_COLUMNS)
+        ) from exc
+    frame = pd.read_csv(path, sep=separator, encoding="utf-8-sig")
     missing = [column for column in EDGE_COLUMNS if column not in frame]
     if missing:
         raise ValueError(

@@ -300,7 +300,7 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                 """
             )
             msp_files = gr.File(
-                label="MSP files", file_types=[".msp"], type="filepath",
+                label="MSP files", type="filepath",
                 file_count="multiple",
             )
             msp_status = gr.Textbox(label="Uploaded MSP status", interactive=False)
@@ -311,7 +311,7 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
             )
             edge_file = gr.File(
                 label="Spectrum similarity edges (TSV/CSV, optional)",
-                file_types=[".tsv", ".csv", ".txt"], type="filepath",
+                type="filepath",
             )
             gr.Markdown(
                 "Required columns: `SourceID`, `TargetID`, `Score`, "
@@ -322,7 +322,6 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
             )
             completed_msp_kg_zip = gr.File(
                 label="Completed MSP KG result ZIP (optional)",
-                file_types=[".zip"],
                 type="filepath",
             )
             gr.Markdown(

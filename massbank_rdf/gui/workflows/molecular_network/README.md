@@ -10,6 +10,10 @@ The workflow URL is `/molecular-network/input/`.
 
 ## Inputs
 
+Uploads are validated by their contents, regardless of filename extension.
+This applies to MSP spectra, result ZIP archives, and edge tables.
+Tab/comma delimiters in edge tables are detected from the header.
+
 ### MSP files
 
 One or more MSP files can be uploaded. The editable `sample_class` column is

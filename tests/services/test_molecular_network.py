@@ -31,6 +31,21 @@ class MolecularNetworkTest(unittest.TestCase):
             columns=["SourceID", "TargetID", "Score", "MatchPeakCount"],
         )
 
+    def test_edge_delimiter_is_detected_from_content(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ("edges.csv", "edges.tsv", "edges.data", "edges"):
+                for separator in (",", "\t"):
+                    with self.subTest(name=name, separator=separator):
+                        path = Path(directory) / name
+                        path.write_text(
+                            separator.join(["SourceID", "TargetID", "Score", "MatchPeakCount"])
+                            + "\n" + separator.join(["a", "b", "0.9", "6"]) + "\n",
+                            encoding="utf-8",
+                        )
+                        result = read_similarity_edges(path)
+                        self.assertEqual(len(result), 1)
+                        self.assertEqual(result.iloc[0]["Score"], 0.9)
+
     def test_reader_validates_and_deduplicates_undirected_edges(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "edges.tsv"

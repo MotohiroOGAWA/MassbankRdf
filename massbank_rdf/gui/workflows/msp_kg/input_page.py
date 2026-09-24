@@ -96,8 +96,6 @@ def read_msp_records(
     """Read all records, preferring an uploaded MSP file."""
     if file_path:
         path = Path(file_path)
-        if path.suffix.lower() != ".msp":
-            raise ValueError("The uploaded file must have the .msp extension.")
         return parse_msp_records(
             path.read_text(encoding="utf-8", errors="replace")
         )
@@ -125,8 +123,6 @@ def inspect_uploaded_msp(file_path: str | None) -> str:
         return "No MSP file is uploaded."
     try:
         path = Path(file_path)
-        if path.suffix.lower() != ".msp":
-            raise ValueError("The uploaded file must have the .msp extension.")
         text = path.read_text(encoding="utf-8", errors="replace")
         blocks = split_msp_record_blocks(text)
     except (OSError, ValueError) as exc:
@@ -800,7 +796,6 @@ def create_app(
             )
             msp_files = gr.File(
                 label="MSP files",
-                file_types=[".msp"],
                 type="filepath",
                 file_count="multiple",
             )
@@ -819,7 +814,6 @@ def create_app(
             )
             config_zip = gr.File(
                 label="Previous MSP result ZIP",
-                file_types=[".zip"],
                 type="filepath",
             )
             gr.Markdown(
@@ -920,7 +914,6 @@ def create_app(
             with gr.Row():
                 llm_settings_upload = gr.File(
                     label="Upload LLM settings",
-                    file_types=[".json"],
                     type="filepath",
                 )
                 download_llm_settings = gr.DownloadButton(
