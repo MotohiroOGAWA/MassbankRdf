@@ -10,7 +10,7 @@ from typing import Any, Iterator
 import gradio as gr
 import pandas as pd
 
-from massbank_rdf.db.massbank.database import MassBankDatabase
+from massbank_rdf.services.common_peak_annotation.common_peak_annotator import annotate_common_peaks_with_massbank
 from massbank_rdf.gui.session_store import TemporarySessionStore
 from massbank_rdf.gui.workflows.msp_kg.input_page import (
     _merge_kg_evidence,
@@ -23,7 +23,6 @@ from massbank_rdf.gui.workflows.msp_kg.processor import (
     _progress_output,
     build_batch_processor,
 )
-from massbank_rdf.services.kg.candidate_ranking import filter_similarity_candidates
 from massbank_rdf.services.kg.common import normalize_inchikey_values
 from massbank_rdf.services.molecular_network import (
     NetworkCondition,
@@ -107,12 +106,19 @@ def _annotate_unknown_clusters(
                 candidates["selected_for_kg"].fillna(False), "spectrum_uid"
             ].astype(str)
         )
-    db = MassBankDatabase()
+    settings = network_job.get("common_peak_settings") or {
+        "mz_tolerance": search_job["mz_tolerance"],
+        "minimum_relative_intensity": network_job["common_relative_intensity"],
+        "common_peak_n": network_job["common_peak_limit"],
+        "massbank_top_n": search_job["top_n"],
+        "min_matched_peaks": search_job["min_matched_peaks"],
+        "minimum_similarity": search_job.get("minimum_similarity", 0.5),
+        "max_massbank_inchikey": search_job.get("max_massbank_inchikey"),
+        "ion_mode": None,
+    }
     fallback_rows: list[pd.DataFrame] = []
     common_rows: list[pd.DataFrame] = []
     fallback_keys: list[str] = []
-    max_keys = search_job.get("max_massbank_inchikey")
-    ion_modes_by_node = spectrum_nodes.set_index("node_id")["ion_mode"].to_dict()
     for cluster_id, cluster in assignments.groupby("cluster_id", sort=False):
         members = cluster["node_id"].astype(str).tolist()
         if selected_spectra.intersection(members):
@@ -120,64 +126,29 @@ def _annotate_unknown_clusters(
         common = common_cluster_peaks(
             spectra,
             members,
-            mz_tolerance=float(search_job["mz_tolerance"]),
+            mz_tolerance=float(settings["mz_tolerance"]),
             minimum_presence_fraction=float(
                 network_job["common_presence_fraction"]
             ),
             minimum_relative_intensity=float(
-                network_job["common_relative_intensity"]
+                settings["minimum_relative_intensity"]
             ),
-            max_peaks=int(network_job["common_peak_limit"]),
+            max_peaks=int(settings["common_peak_n"]),
         )
         if common.empty:
             continue
         common.insert(0, "cluster_id", cluster_id)
         common_rows.append(common)
-        cluster_ion_modes = sorted(
-            {
-                str(ion_modes_by_node.get(member, "")).strip()
-                for member in members
-                if str(ion_modes_by_node.get(member, "")).strip()
-            }
+        annotation = annotate_common_peaks_with_massbank(
+            common,
+            **{key: value for key, value in settings.items() if key != "minimum_relative_intensity"},
         )
-        if not cluster_ion_modes:
+        hits = annotation["massbank_hits"].copy()
+        if hits.empty:
             continue
-        raw_parts = []
-        for ion_mode in cluster_ion_modes:
-            part = db.search_record_ids_by_cosine_similarity_sql(
-                common["mz"].tolist(),
-                common["intensity"].tolist(),
-                top_n=int(search_job["top_n"]),
-                mz_tolerance=float(search_job["mz_tolerance"]),
-                min_matched_peaks=int(search_job["min_matched_peaks"]),
-                ion_mode=ion_mode,
-                precursor_mz=None,
-                precursor_tolerance=None,
-            )
-            part["fallback_ion_mode"] = ion_mode
-            raw_parts.append(part)
-        raw = pd.concat(raw_parts, ignore_index=True)
-        raw = filter_similarity_candidates(
-            raw,
-            float(search_job.get("minimum_similarity", 0.5)),
-            score_column="cosine_score",
-        ).sort_values("cosine_score", ascending=False, kind="stable")
-        raw = raw.drop_duplicates("id").head(int(search_job["top_n"]))
-        if raw.empty:
-            continue
-        records = db.get_records_by_ids_dataframe(raw["id"].astype(int).tolist())
-        hits = raw.merge(records, on="id", how="left").drop(columns=["id"])
-        hits = hits.rename(
-            columns={
-                "cosine_score": "score",
-                "matched_peak_count": "match",
-            }
-        )
         keys = normalize_inchikey_values(
             hits.get("inchikey", pd.Series(dtype=str)).dropna().astype(str).tolist()
         )
-        if max_keys:
-            keys = keys[: int(max_keys)]
         fallback_keys.extend(keys)
         hits["selected_for_kg"] = hits["inchikey"].isin(keys)
         hits["annotation_source"] = "cluster_common_peak_massbank"
@@ -411,6 +382,7 @@ def build_molecular_network_processor(
         config = {
             "workflow": "molecular_network",
             "selected_condition_id": selected_condition,
+            "common_peak_settings": network_job.get("common_peak_settings"),
             "edge_source": network_job.get("edge_source", "uploaded"),
             "reused_msp_kg_result": bool(
                 payload.get("reused_msp_kg_result")

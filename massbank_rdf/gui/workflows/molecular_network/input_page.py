@@ -19,6 +19,8 @@ from massbank_rdf.gui.workflows.msp_kg.input_page import (
     load_result_payload_from_zip,
     parse_readable_msp_records,
 )
+from massbank_rdf.gui.workflows.shared.common_peak_conditions_panel import create_common_peak_conditions_panel
+from massbank_rdf.services.common_peak_annotation.settings import build_common_peak_settings
 from massbank_rdf.services.molecular_network import read_similarity_edges
 
 
@@ -114,17 +116,19 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
         edge_file: str | None,
         completed_msp_kg_zip: str | None,
         resume_enabled: bool,
-        top_n: int,
         mz_tolerance: float,
-        massbank_min_peaks: int,
+        minimum_relative_intensity: float,
+        common_peak_n: float,
+        max_massbank_inchikey: float,
+        massbank_top_n: float,
+        min_matched_peaks: float,
         minimum_similarity: float,
+        ion_mode: str,
         use_kg_metadata_rank: bool,
         use_precursor_mz: bool,
         precursor_mz_column: str,
         precursor_tolerance: float,
-        use_ion_mode: bool,
         ion_mode_column: str,
-        max_massbank_inchikey: int | None,
         score_thresholds: str,
         network_match_peaks: str,
         top_k_values: str,
@@ -133,8 +137,6 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
         selected_top_k: str,
         selected_resolution: float,
         common_presence: float,
-        common_intensity: float,
-        common_peak_limit: int,
         random_seed: int,
         request: gr.Request,
     ) -> str:
@@ -142,6 +144,13 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
         if not session_id:
             raise gr.Error("Session ID was not found. Please reload the page.")
         try:
+            settings = build_common_peak_settings(
+                mz_tolerance, minimum_relative_intensity, common_peak_n,
+                max_massbank_inchikey, massbank_top_n, min_matched_peaks,
+                minimum_similarity, ion_mode,
+            )
+            if not 0 <= float(common_presence) <= 1:
+                raise ValueError("Minimum cluster presence fraction must be between 0 and 1.")
             if not msp_files:
                 raise ValueError("Please upload one or more MSP files.")
             edge_frame = (
@@ -198,7 +207,7 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
             top_values = _comma_values(top_k_values, int, allow_all=True)
             resolution_values = _comma_values(resolutions, float)
             selected_top = _comma_values(selected_top_k, int, allow_all=True)[0]
-            max_kg = int(max_massbank_inchikey) if max_massbank_inchikey else None
+            max_kg = settings["max_massbank_inchikey"]
         except (OSError, ValueError, TypeError) as exc:
             raise gr.Error(str(exc)) from exc
 
@@ -206,9 +215,9 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
             "msp_batch_job": {
                 "documents": documents,
                 "resume_enabled": bool(resume_enabled),
-                "top_n": int(top_n),
+                "top_n": settings["massbank_top_n"],
                 "mz_tolerance": float(mz_tolerance),
-                "min_matched_peaks": int(massbank_min_peaks),
+                "min_matched_peaks": settings["min_matched_peaks"],
                 "minimum_similarity": float(minimum_similarity),
                 "use_kg_metadata_rank": bool(use_kg_metadata_rank),
                 "use_precursor_mz": bool(use_precursor_mz),
@@ -220,6 +229,7 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                 "use_short_inchikey": False,
             },
             "molecular_network_job": {
+                "common_peak_settings": settings,
                 "documents": documents,
                 "edge_tsv": (
                     edge_frame.to_csv(sep="\t", index=False)
@@ -235,8 +245,8 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                 "selected_top_k": selected_top,
                 "selected_resolution": float(selected_resolution),
                 "common_presence_fraction": float(common_presence),
-                "common_relative_intensity": float(common_intensity),
-                "common_peak_limit": int(common_peak_limit),
+                "common_relative_intensity": settings["minimum_relative_intensity"],
+                "common_peak_limit": settings["common_peak_n"],
                 "random_seed": int(random_seed),
             },
             "summary": {
@@ -244,9 +254,9 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                 "record_count": total,
                 "readable_spectrum_count": readable,
                 "skipped_record_count": skipped,
-                "top_n": int(top_n),
+                "top_n": settings["massbank_top_n"],
                 "mz_tolerance": float(mz_tolerance),
-                "min_matched_peaks": int(massbank_min_peaks),
+                "min_matched_peaks": settings["min_matched_peaks"],
                 "minimum_similarity": float(minimum_similarity),
                 "use_kg_metadata_rank": bool(use_kg_metadata_rank),
                 "use_precursor_mz": bool(use_precursor_mz),
@@ -330,30 +340,22 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                 "exactly the same spectrum IDs as the uploaded MSP files."
             )
             resume_enabled = gr.Checkbox(label="Resume from checkpoint", value=False)
-            gr.HTML("<h3>MassBank and KG conditions</h3>")
+            conditions = create_common_peak_conditions_panel()
+            gr.Markdown(
+                "These conditions control cluster common-peak annotation. "
+                "MassBank top N, m/z tolerance, minimum matched peaks, similarity "
+                "and InChIKey limit also apply to individual spectra. "
+                "Individual spectra use the ion mode stored in the MSP."
+            )
+            gr.HTML("<h3>Additional molecular-network settings</h3>")
             with gr.Row():
-                top_n = gr.Number(label="MassBank top N", value=10, precision=0)
-                mz_tolerance = gr.Number(label="m/z tolerance", value=0.01)
-                massbank_min_peaks = gr.Number(label="Min matched peaks", value=1, precision=0)
-                minimum_similarity = gr.Number(label="Minimum similarity", value=0.5)
-                use_kg_metadata_rank = gr.Checkbox(label="Use KG metadata rank", value=True)
-            with gr.Row():
-                use_precursor_mz = gr.Checkbox(label="Use precursor m/z", value=True)
+                use_kg_metadata_rank = gr.Checkbox(
+                    label="Use KG metadata rank for individual spectra", value=True
+                )
+                use_precursor_mz = gr.Checkbox(label="Use precursor m/z for individual spectra", value=True)
                 precursor_mz_column = gr.Textbox(label="Precursor column", value="PRECURSORMZ")
                 precursor_tolerance = gr.Number(label="Precursor tolerance", value=0.01)
-                use_ion_mode = gr.Checkbox(
-                    label="Use ion mode",
-                    value=True,
-                    interactive=False,
-                    info=(
-                        "Required in this workflow, including unannotated-"
-                        "cluster common-peak searches."
-                    ),
-                )
-                ion_mode_column = gr.Textbox(label="Ion mode column", value="IONMODE")
-                max_massbank_inchikey = gr.Number(
-                    label="Max InChIKeys per spectrum", value=None, precision=0
-                )
+                ion_mode_column = gr.Textbox(label="MSP ion mode column", value="IONMODE")
             gr.HTML("<h3>Network condition grid</h3>")
             with gr.Row():
                 score_thresholds = gr.Textbox(
@@ -377,14 +379,8 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
             with gr.Row():
                 common_presence = gr.Slider(
                     label="Minimum cluster presence fraction", minimum=0, maximum=1,
-                    value=0.5,
-                )
-                common_intensity = gr.Slider(
-                    label="Minimum relative intensity", minimum=0, maximum=1,
-                    value=0.05,
-                )
-                common_peak_limit = gr.Number(
-                    label="Maximum common peaks", value=100, precision=0
+                    value=0,
+                    info="0 disables this additional cluster filter.",
                 )
             run_button = gr.Button("Run", elem_id="massbank-basic-search-button")
             status = gr.Textbox(visible=False)
@@ -395,14 +391,12 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                 run,
                 [
                     msp_files, file_classes, edge_file, completed_msp_kg_zip,
-                    resume_enabled, top_n,
-                    mz_tolerance, massbank_min_peaks, minimum_similarity,
+                    resume_enabled, *conditions.inputs,
                     use_kg_metadata_rank, use_precursor_mz, precursor_mz_column,
-                    precursor_tolerance, use_ion_mode, ion_mode_column,
-                    max_massbank_inchikey, score_thresholds, network_match_peaks,
+                    precursor_tolerance, ion_mode_column,
+                    score_thresholds, network_match_peaks,
                     top_k_values, resolutions, selected_score, selected_top_k,
-                    selected_resolution, common_presence, common_intensity,
-                    common_peak_limit, random_seed,
+                    selected_resolution, common_presence, random_seed,
                 ],
                 status,
             ).then(

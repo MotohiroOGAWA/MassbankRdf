@@ -40,7 +40,7 @@ def create_app() -> gr.Blocks:
 
             gr.HTML(render_kg_workflow_item_html())
             gr.HTML(render_msp_kg_workflow_item_html())
-            gr.HTML(render_molecular_network_workflow_item_html())
             gr.HTML(render_common_peak_annotation_workflow_item_html())
+            gr.HTML(render_molecular_network_workflow_item_html())
 
     return app

@@ -12,6 +12,9 @@ import pandas as pd
 from scipy import sparse
 
 
+from massbank_rdf.services.common_peak_annotation.common_peak_finder import PeakRecord, find_common_peaks
+
+
 EDGE_COLUMNS = ("SourceID", "TargetID", "Score", "MatchPeakCount")
 
 
@@ -585,58 +588,24 @@ def common_cluster_peaks(
     minimum_relative_intensity: float = 0.05,
     max_peaks: int = 100,
 ) -> pd.DataFrame:
-    """Find frequent, sufficiently intense peaks in an unannotated cluster."""
-    selected = [spectra[node] for node in node_ids if node in spectra]
-    if not selected:
-        return pd.DataFrame(columns=["mz", "intensity", "presence_count", "presence_fraction"])
-    observations: list[tuple[float, float, int]] = []
-    for spectrum_index, (mz_values, intensity_values) in enumerate(selected):
-        mz = np.asarray(list(mz_values), dtype=float)
-        intensity = np.asarray(list(intensity_values), dtype=float)
-        maximum = float(intensity.max()) if len(intensity) else 0.0
-        if maximum <= 0:
-            continue
-        relative = intensity / maximum
-        for peak_mz, peak_intensity in zip(mz, relative):
-            if peak_intensity >= float(minimum_relative_intensity):
-                observations.append((float(peak_mz), float(peak_intensity), spectrum_index))
-    observations.sort()
-    groups: list[list[tuple[float, float, int]]] = []
-    for observation in observations:
-        if not groups or observation[0] - groups[-1][-1][0] > float(mz_tolerance):
-            groups.append([observation])
-        else:
-            groups[-1].append(observation)
-    rows = []
-    for group in groups:
-        best_by_spectrum: dict[int, tuple[float, float]] = {}
-        for mz, intensity, spectrum_index in group:
-            current = best_by_spectrum.get(spectrum_index)
-            if current is None or intensity > current[1]:
-                best_by_spectrum[spectrum_index] = (mz, intensity)
-        presence = len(best_by_spectrum)
-        fraction = presence / len(selected)
-        if fraction < float(minimum_presence_fraction):
-            continue
-        weights = np.asarray([value[1] for value in best_by_spectrum.values()])
-        mzs = np.asarray([value[0] for value in best_by_spectrum.values()])
-        rows.append(
-            {
-                "mz": float(np.average(mzs, weights=weights)),
-                "intensity": float(weights.mean() * fraction),
-                "presence_count": presence,
-                "presence_fraction": fraction,
-            }
-        )
-    return (
-        pd.DataFrame(rows)
-        .sort_values(["presence_fraction", "intensity"], ascending=False)
-        .head(int(max_peaks))
-        .sort_values("mz")
-        .reset_index(drop=True)
-        if rows
-        else pd.DataFrame(columns=["mz", "intensity", "presence_count", "presence_fraction"])
+    """Use the shared detector, with an optional cluster presence filter."""
+    if not 0 <= minimum_presence_fraction <= 1:
+        raise ValueError("Minimum cluster presence fraction must be between 0 and 1.")
+    records = [
+        PeakRecord(index, str(node), list(zip(*spectra[node])))
+        for index, node in enumerate(node_ids, start=1) if node in spectra
+    ]
+    common = find_common_peaks(
+        records, mz_tolerance=mz_tolerance,
+        minimum_relative_intensity=minimum_relative_intensity,
     )
+    common["presence_fraction"] = common["record_count"] / len(records) if records else 0.0
+    common = common.loc[common["presence_fraction"] >= minimum_presence_fraction].head(max_peaks).copy()
+    # Retain the network/CLI export aliases; search intensities use commonness.
+    common["mz"] = common["mz_mean"]
+    common["intensity"] = common["record_count"]
+    common["presence_count"] = common["record_count"]
+    return common.reset_index(drop=True)
 
 
 def build_cytoscape_tables(
