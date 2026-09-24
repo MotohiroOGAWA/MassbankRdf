@@ -52,11 +52,18 @@ class TestMspKgInput(unittest.TestCase):
             record = read_msp_input(str(path), MSP_TEXT)
         self.assertEqual(record.get_metadata_value("Name"), "Uploaded")
 
-    def test_non_msp_upload_is_rejected(self) -> None:
+    def test_msp_upload_is_validated_by_content(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "record.txt"
-            path.write_text(MSP_TEXT, encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, r"\.msp"):
+            for name in ("record.txt", "record.csv", "record"):
+                with self.subTest(name=name):
+                    path = Path(directory) / name
+                    path.write_text(MSP_TEXT, encoding="utf-8")
+                    record = read_msp_input(str(path), "")
+                    self.assertEqual(record.get_metadata_value("Name"), "Example")
+                    self.assertIn("1 readable spectra", inspect_uploaded_msp(str(path)))
+            path = Path(directory) / "invalid.msp"
+            path.write_text("not a spectrum", encoding="utf-8")
+            with self.assertRaises(ValueError):
                 read_msp_input(str(path), "")
 
     def test_normalize_ion_mode(self) -> None:
@@ -188,7 +195,7 @@ class TestMspKgInput(unittest.TestCase):
             ]
         )
         with tempfile.TemporaryDirectory() as directory:
-            archive_path = Path(directory) / "result.zip"
+            archive_path = Path(directory) / "result.data"
             with zipfile.ZipFile(archive_path, "w") as archive:
                 archive.writestr(
                     "workflow_config.json",
@@ -244,7 +251,7 @@ class TestMspKgInput(unittest.TestCase):
             ],
         }
         with tempfile.TemporaryDirectory() as directory:
-            archive_path = Path(directory) / "result.zip"
+            archive_path = Path(directory) / "result.data"
             with zipfile.ZipFile(archive_path, "w") as archive:
                 archive.writestr("workflow_config.json", json.dumps(config))
                 archive.writestr(
@@ -282,7 +289,7 @@ class TestMspKgInput(unittest.TestCase):
 
     def test_incomplete_result_zip_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            archive_path = Path(directory) / "result.zip"
+            archive_path = Path(directory) / "result.data"
             with zipfile.ZipFile(archive_path, "w") as archive:
                 archive.writestr(
                     "workflow_config.json",
@@ -327,7 +334,10 @@ class TestMspKgInput(unittest.TestCase):
             user_context="Test samples",
         )
         saved = json.loads(Path(path).read_text(encoding="utf-8"))
-        loaded = load_llm_settings_file(path, "current-secret")
+        with tempfile.TemporaryDirectory() as directory:
+            renamed = Path(directory) / "settings.data"
+            renamed.write_text(Path(path).read_text(encoding="utf-8"), encoding="utf-8")
+            loaded = load_llm_settings_file(str(renamed), "current-secret")
 
         self.assertEqual(saved["api_key"], "saved-secret")
         self.assertEqual(loaded[1], True)

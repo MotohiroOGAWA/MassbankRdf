@@ -10,6 +10,10 @@ The workflow URL is `/molecular-network/input/`.
 
 ## Inputs
 
+Uploads are validated by their contents, regardless of filename extension.
+This applies to MSP spectra, result ZIP archives, and edge tables.
+Tab/comma delimiters in edge tables are detected from the header.
+
 ### MSP files
 
 One or more MSP files can be uploaded. The editable `sample_class` column is
@@ -91,8 +95,9 @@ InChIKeys are then queried against the KG in batches. `Use KG metadata rank`
 can be turned off to rank unique InChIKeys using MassBank similarity only.
 
 The precursor m/z filter applies only to this ordinary per-spectrum search.
-Ion mode is required and is used for both ordinary per-spectrum searches and
-unannotated-cluster common-peak searches.
+The MSP ion mode is required for ordinary per-spectrum searches and automatic
+edge generation. Common-peak searches use the shared Ion mode dropdown instead;
+a blank selection disables that search filter.
 
 ## Molecular-network condition grid
 
@@ -134,23 +139,36 @@ After the selected network has been clustered, a cluster is considered
 annotated when at least one member spectrum has a selected MassBank InChIKey.
 Only clusters with no such annotation enter the fallback.
 
+The **Common peak annotation conditions** panel is the same component used by
+Common Peak Annotation. Both workflows share validation, `find_common_peaks`,
+and `annotate_common_peaks_with_massbank`, including KG metadata ranking and
+unique InChIKey limits. Change the shared component/service to update both.
+
+Shared defaults are m/z tolerance 0.01, minimum relative intensity 0.05,
+Common peak N 10, unlimited unique InChIKeys, MassBank top N 50,
+minimum matched peaks 3, minimum cosine similarity 0.5, and Positive ion mode.
+The MassBank search limits also apply to ordinary per-spectrum searches.
+
 For each unannotated cluster:
 
-1. Normalize each spectrum's intensities to its base peak.
-2. Remove peaks below the configured minimum relative intensity.
-3. Group m/z observations within the MassBank m/z tolerance.
-4. Retain groups present in at least the configured fraction of cluster
-   spectra.
-5. Rank common peaks by presence and intensity and cap their number.
-6. Search the synthesized common-peak spectrum against MassBank.
+1. Remove peaks below the per-record relative intensity threshold.
+2. Group peaks within tolerance of the running group mean m/z.
+3. Rank by record count, peak count, total intensity, then m/z.
+4. Apply the network-specific minimum cluster presence fraction (default 0,
+   disabled), preserving the shared ranking.
+5. Select Common peak N peaks and search using record counts as pseudo intensities.
+6. Apply similarity filtering, shared KG metadata ranking and the InChIKey limit.
 
-This fallback intentionally disables precursor m/z, but retains ion mode. When
-a cluster contains multiple ion modes, its common peaks are searched separately
-for every ion mode represented in the cluster, after which duplicate MassBank
-records are collapsed. Clusters without a readable ion mode are not searched.
-Its candidate edges are marked `cluster_common_peak_massbank`; they are cluster-level
-inferences propagated to member spectra and should not be interpreted as
-direct spectrum identification.
+Common-peak search does not apply precursor m/z. Its Ion mode dropdown has
+exactly the same behavior as Common Peak Annotation, including the blank option.
+MSP ion-mode column, ordinary-spectrum precursor filtering/ranking, cluster
+presence threshold, and network/Leiden settings remain additional controls.
+
+Candidate edges are marked `cluster_common_peak_massbank`; these are cluster-level
+inferences propagated to member spectra, not direct spectrum identifications.
+`molecular_network_config.json` records the shared `common_peak_settings` as well
+as the network-specific settings. Common peak exports retain shared statistics
+and the network aliases `mz`, `intensity` (record count), and `presence_count`.
 
 Fallback InChIKeys that were not already queried are sent to the KG in batches.
 

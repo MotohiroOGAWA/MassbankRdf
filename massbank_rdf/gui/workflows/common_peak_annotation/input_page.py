@@ -6,19 +6,14 @@ from typing import Any
 
 import gradio as gr
 
+from ....services.common_peak_annotation.settings import build_common_peak_settings
+
 from ...session_store import TemporarySessionStore
 from ..shared.llm_config_panel import (
     build_llm_config,
     create_llm_config_panel,
 )
-from ..shared.candidate_ranking_panel import create_minimum_similarity_input
-from ....services.common_peak_annotation.common_peak_annotator import (
-    normalize_optional_positive_int,
-)
-from ..shared.llm_config_panel import (
-    build_llm_config,
-    create_llm_config_panel,
-)
+from ..shared.common_peak_conditions_panel import create_common_peak_conditions_panel
 
 EXAMPLE_COMMON_PEAK_QUERY_PATH = (
     Path(__file__).resolve().parents[2]
@@ -96,6 +91,7 @@ def _records_to_peak_text(
 def _load_example_common_peak_values() -> tuple[
     str,
     float,
+    float,
     int,
     int | None,
     int,
@@ -116,6 +112,7 @@ def _load_example_common_peak_values() -> tuple[
     return (
         peak_text,
         float(data.get("mz_tolerance", 0.01)),
+        float(data.get("minimum_relative_intensity", 0.05)),
         int(data.get("common_peak_n", 10)),
         data.get("max_massbank_inchikey", None),
         int(data.get("massbank_top_n", 50)),
@@ -123,27 +120,6 @@ def _load_example_common_peak_values() -> tuple[
         float(data.get("minimum_similarity", 0.5)),
         str(data.get("ion_mode", "")),
     )
-
-
-def _normalize_ion_mode_for_db(
-    ion_mode: str | None,
-) -> str | None:
-    """Normalize ion mode label for database search."""
-    if ion_mode is None:
-        return None
-
-    value = ion_mode.strip()
-
-    if not value:
-        return None
-
-    if value.lower() == "positive":
-        return "POSITIVE"
-
-    if value.lower() == "negative":
-        return "NEGATIVE"
-
-    return value
 
 
 def _validate_peak_text(
@@ -213,6 +189,7 @@ def create_app(
     def _run_and_save(
         peak_text: str,
         mz_tolerance: float,
+        minimum_relative_intensity: float,
         common_peak_n: int,
         max_massbank_inchikey: int | float | None,
         massbank_top_n: int,
@@ -234,32 +211,20 @@ def create_app(
             raise gr.Error("Session ID was not found.")
 
         _validate_peak_text(peak_text)
-
-        max_massbank_inchikey_value = normalize_optional_positive_int(
-            max_massbank_inchikey
-        )
-
-        normalized_ion_mode = _normalize_ion_mode_for_db(
-            ion_mode
-        )
+        try:
+            settings = build_common_peak_settings(
+                mz_tolerance, minimum_relative_intensity, common_peak_n,
+                max_massbank_inchikey, massbank_top_n, min_matched_peaks,
+                minimum_similarity, ion_mode,
+            )
+        except (ValueError, TypeError) as exc:
+            raise gr.Error(str(exc)) from exc
 
         payload = {
             "input": {
                 "peak_text": peak_text,
             },
-            "summary": {
-                "mz_tolerance": float(mz_tolerance),
-                "common_peak_n": int(common_peak_n),
-                "max_massbank_inchikey": (
-                    max_massbank_inchikey_value
-                    if max_massbank_inchikey_value is not None
-                    else "-"
-                ),
-                "massbank_top_n": int(massbank_top_n),
-                "min_matched_peaks": int(min_matched_peaks),
-                "minimum_similarity": float(minimum_similarity),
-                "ion_mode": normalized_ion_mode or "-",
-            },
+            "summary": settings,
             "llm_config": build_llm_config(
                 enabled=llm_enabled,
                 output_language=llm_output_language,
@@ -322,57 +287,7 @@ def create_app(
                 ),
             )
 
-            gr.HTML("<h3>Common peak annotation conditions</h3>")
-
-            with gr.Row():
-                mz_tolerance = gr.Number(
-                    label="m/z tolerance",
-                    value=0.01,
-                    precision=None,
-                    minimum=0,
-                )
-
-                common_peak_n = gr.Number(
-                    label="Common peak N",
-                    value=10,
-                    precision=0,
-                    minimum=1,
-                )
-
-                max_massbank_inchikey = gr.Number(
-                    label="Max MassBank InChIKey",
-                    value=None,
-                    precision=0,
-                    minimum=1,
-                    info="Blank means all unique InChIKeys from MassBank hits.",
-                )
-
-            with gr.Row():
-                massbank_top_n = gr.Number(
-                    label="MassBank top N",
-                    value=50,
-                    precision=0,
-                    minimum=1,
-                )
-
-                min_matched_peaks = gr.Number(
-                    label="Min matched peaks",
-                    value=3,
-                    precision=0,
-                    minimum=1,
-                )
-
-                minimum_similarity = create_minimum_similarity_input()
-
-                ion_mode = gr.Dropdown(
-                    label="Ion mode",
-                    choices=[
-                        "",
-                        "Positive",
-                        "Negative",
-                    ],
-                    value="Positive",
-                )
+            conditions = create_common_peak_conditions_panel()
 
             llm_config_components = create_llm_config_panel()
 
@@ -391,13 +306,7 @@ def create_app(
                 inputs=[],
                 outputs=[
                     peak_text,
-                    mz_tolerance,
-                    common_peak_n,
-                    max_massbank_inchikey,
-                    massbank_top_n,
-                    min_matched_peaks,
-                    minimum_similarity,
-                    ion_mode,
+                    *conditions.inputs,
                 ],
             )
 
@@ -405,13 +314,7 @@ def create_app(
                 fn=_run_and_save,
                 inputs=[
                     peak_text,
-                    mz_tolerance,
-                    common_peak_n,
-                    max_massbank_inchikey,
-                    massbank_top_n,
-                    min_matched_peaks,
-                    minimum_similarity,
-                    ion_mode,
+                    *conditions.inputs,
                     *llm_config_components.inputs,
                 ],
                 outputs=status_box,
