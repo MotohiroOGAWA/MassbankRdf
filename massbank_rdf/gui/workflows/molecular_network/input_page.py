@@ -156,6 +156,12 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
             edge_frame = (
                 read_similarity_edges(edge_file) if edge_file else None
             )
+            if edge_frame is not None and edge_frame["MatchPeakCount"].isna().any():
+                gr.Warning(
+                    "MatchPeakCount is missing from the similarity edge table. "
+                    "Matched-peak counts will be calculated from the uploaded MSP "
+                    "spectra using the configured m/z tolerance and applied to the network."
+                )
             if edge_frame is not None and edge_frame.empty:
                 raise ValueError("No usable similarity edges were found.")
             class_frame = pd.DataFrame(file_classes)
@@ -324,8 +330,10 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                 type="filepath",
             )
             gr.Markdown(
-                "Required columns: `SourceID`, `TargetID`, `Score`, "
-                "`MatchPeakCount`. IDs may be a unique MSP `Name` or "
+                "Required columns: `SourceID`, `TargetID`, `Score`. "
+                "If `MatchPeakCount` is absent, a warning is shown and counts are "
+                "calculated from the MSP spectra using the m/z tolerance. "
+                "IDs may be a unique MSP `Name` or "
                 "`file.msp::record_number`. If omitted, edges are calculated "
                 "from the uploaded MSP spectra using ion-mode-specific cosine "
                 "similarity."

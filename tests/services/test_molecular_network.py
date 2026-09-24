@@ -11,6 +11,7 @@ from massbank_rdf.services.molecular_network import (
     build_cytoscape_tables,
     common_cluster_peaks,
     filter_edges,
+    fill_missing_match_peak_counts,
     generate_similarity_edges,
     generate_binned_numpy_similarity_edges,
     read_similarity_edges,
@@ -30,6 +31,33 @@ class MolecularNetworkTest(unittest.TestCase):
             ],
             columns=["SourceID", "TargetID", "Score", "MatchPeakCount"],
         )
+
+    def test_missing_counts_are_calculated_and_used_for_filtering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "edges.data"
+            path.write_text("SourceID,TargetID,Score\nA,B,0.9\nA,C,0.8\n")
+            edges = read_similarity_edges(path)
+        self.assertTrue(edges["MatchPeakCount"].isna().all())
+        spectra = {
+            "A": ([100, 100.002, 200], [10, 20, 30]),
+            "B": ([100.001, 200.005], [10, 20]),
+            "C": ([500], [10]),
+        }
+        result = fill_missing_match_peak_counts(edges, spectra, mz_tolerance=0.01)
+        self.assertEqual(result["MatchPeakCount"].tolist(), [2, 0])
+        self.assertEqual(result["Score"].tolist(), [0.9, 0.8])
+        filtered = filter_edges(result, score_threshold=0, match_peak_count=1, top_k=None)
+        self.assertEqual(filtered["TargetID"].tolist(), ["B"])
+        exact = fill_missing_match_peak_counts(edges, spectra, mz_tolerance=0)
+        self.assertEqual(exact["MatchPeakCount"].tolist(), [0, 0])
+
+    def test_supplied_counts_are_preserved_and_unknown_ids_rejected(self):
+        result = fill_missing_match_peak_counts(self.edges, {}, mz_tolerance=0.01)
+        pd.testing.assert_frame_equal(result, self.edges)
+        missing = self.edges.copy()
+        missing["MatchPeakCount"] = float("nan")
+        with self.assertRaisesRegex(ValueError, "do not match an MSP"):
+            fill_missing_match_peak_counts(missing, {}, mz_tolerance=0.01)
 
     def test_edge_delimiter_is_detected_from_content(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

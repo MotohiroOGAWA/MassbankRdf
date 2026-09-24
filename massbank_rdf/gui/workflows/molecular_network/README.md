@@ -61,7 +61,13 @@ case-sensitive columns:
 | `SourceID` | First spectrum node |
 | `TargetID` | Second spectrum node |
 | `Score` | Spectrum similarity and edge weight |
-| `MatchPeakCount` | Number of matched peaks |
+| `MatchPeakCount` | Optional number of matched peaks |
+
+If `MatchPeakCount` is absent, the UI shows a warning. Before MassBank/KG
+search, the workflow matches each edge endpoint to its MSP spectrum and computes
+one-to-one matched-peak counts using the configured m/z tolerance. The supplied
+`Score` is preserved. Computed counts are used in network filtering and exported
+in the edge tables. Unknown spectrum IDs produce an error.
 
 Self-loops are removed. Reverse/duplicate edges are collapsed and the row with
 the highest `Score`, then highest `MatchPeakCount`, is retained.

@@ -31,6 +31,7 @@ from massbank_rdf.services.molecular_network import (
     common_cluster_peaks,
     deduplicate_edges,
     generate_similarity_edges,
+    fill_missing_match_peak_counts,
     resolve_score_thresholds,
 )
 
@@ -255,6 +256,26 @@ def build_molecular_network_processor(
             )
             payload["molecular_network_job"] = network_job
             session_store.set(session_id, payload)
+        uploaded_edges = pd.read_csv(io.StringIO(network_job["edge_tsv"]), sep="\t")
+        if uploaded_edges["MatchPeakCount"].isna().any():
+            yield _progress_output(
+                "Calculating missing MatchPeakCount from MSP spectra...", 0.04
+            )
+            _, spectra, aliases = _prepare_spectra(
+                network_job["documents"],
+                ion_mode_column=str(search_job_copy.get("ion_mode_column", "IONMODE")),
+            )
+            try:
+                uploaded_edges = fill_missing_match_peak_counts(
+                    _remap_edges(uploaded_edges, aliases), spectra,
+                    mz_tolerance=float(search_job_copy["mz_tolerance"]),
+                )
+            except ValueError as exc:
+                raise gr.Error(str(exc)) from exc
+            network_job["edge_tsv"] = uploaded_edges.to_csv(sep="\t", index=False)
+            payload["molecular_network_job"] = network_job
+            session_store.set(session_id, payload)
+            yield _progress_output("MatchPeakCount calculated and applied.", 0.08)
         for message, html in base_processor(request, progress):
             match = re.search(r'value="([0-9.]+)"', html)
             base_fraction = (

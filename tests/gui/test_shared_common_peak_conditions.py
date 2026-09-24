@@ -40,13 +40,32 @@ class SharedCommonPeakTest(unittest.TestCase):
             values = [c.value for c in network_run.inputs]
             values[0] = [str(path)]
             values[1] = pd.DataFrame([{'sample_class': 'Sample'}])
+            edge_path = Path(directory) / 'edges.data'
+            path.write_text(path.read_text() + '\nName: B\nIONMODE: Negative\nNum Peaks: 2\n100.001 10\n300 20\n')
+            edge_path.write_text('SourceID,TargetID,Score\nA,B,0.9\n')
+            values[2] = str(edge_path)
             values[5:13] = settings
-            network_run.fn(*values, request=request)
+            with patch('massbank_rdf.gui.workflows.molecular_network.input_page.gr.Warning') as warning:
+                network_run.fn(*values, request=request)
+                warning.assert_called_once()
+                self.assertIn('MatchPeakCount', warning.call_args.args[0])
         expected = stores[0].get('common')['summary']
         payload = stores[1].get('network')
         self.assertEqual(expected, payload['molecular_network_job']['common_peak_settings'])
         self.assertEqual(payload['msp_batch_job']['top_n'], 25)
         self.assertEqual(payload['msp_batch_job']['min_matched_peaks'], 4)
+        from massbank_rdf.gui.workflows.molecular_network.processor import build_molecular_network_processor
+        import io
+        processor = build_molecular_network_processor(stores[1], Mock())
+        updates = processor(request)
+        self.assertIn('Calculating missing MatchPeakCount', next(updates)[0])
+        self.assertIn('calculated and applied', next(updates)[0])
+        updates.close()
+        computed = pd.read_csv(io.StringIO(stores[1].get('network')['molecular_network_job']['edge_tsv']), sep='\t')
+        self.assertEqual(computed['MatchPeakCount'].tolist(), [1])
+        self.assertEqual(computed['SourceID'].tolist(), ['spectra.data::1'])
+        self.assertEqual(computed['TargetID'].tolist(), ['spectra.data::2'])
+        self.assertEqual(computed['Score'].tolist(), [0.9])
 
     def test_detector_matches_shared_ranking_and_grouping(self):
         spectra = {'a': ([100, 100.009, 100.018, 200], [100, 30, 20, 1]),

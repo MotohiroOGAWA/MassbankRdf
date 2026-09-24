@@ -308,15 +308,18 @@ def read_similarity_edges(path: str | Path) -> pd.DataFrame:
     except csv.Error as exc:
         raise ValueError(
             "Similarity edge table must contain a tab- or comma-separated header "
-            "with required columns: " + ", ".join(EDGE_COLUMNS)
+            "with required columns: " + ", ".join(EDGE_COLUMNS[:3])
         ) from exc
     frame = pd.read_csv(path, sep=separator, encoding="utf-8-sig")
-    missing = [column for column in EDGE_COLUMNS if column not in frame]
+    missing = [column for column in EDGE_COLUMNS[:3] if column not in frame]
     if missing:
         raise ValueError(
             "Similarity edge table is missing required columns: "
             + ", ".join(missing)
         )
+    needs_peak_counts = "MatchPeakCount" not in frame
+    if needs_peak_counts:
+        frame["MatchPeakCount"] = np.nan
     result = frame.loc[:, EDGE_COLUMNS].copy()
     result["SourceID"] = result["SourceID"].astype(str).str.strip()
     result["TargetID"] = result["TargetID"].astype(str).str.strip()
@@ -324,13 +327,35 @@ def read_similarity_edges(path: str | Path) -> pd.DataFrame:
     result["MatchPeakCount"] = pd.to_numeric(
         result["MatchPeakCount"], errors="coerce"
     )
-    result = result.dropna(subset=["Score", "MatchPeakCount"])
+    result = result.dropna(subset=["Score"] if needs_peak_counts else ["Score", "MatchPeakCount"])
     result = result[
         (result["SourceID"] != "")
         & (result["TargetID"] != "")
         & (result["SourceID"] != result["TargetID"])
     ].copy()
     return deduplicate_edges(result)
+
+
+def fill_missing_match_peak_counts(
+    edges: pd.DataFrame,
+    spectra: dict[str, tuple[Iterable[float], Iterable[float]]],
+    *,
+    mz_tolerance: float,
+) -> pd.DataFrame:
+    """Fill missing counts for mapped edge endpoints using exact peak matching."""
+    if not math.isfinite(mz_tolerance) or mz_tolerance < 0:
+        raise ValueError("m/z tolerance must be finite and nonnegative.")
+    result = edges.copy()
+    if "MatchPeakCount" not in result:
+        result["MatchPeakCount"] = np.nan
+    for index in result.index[result["MatchPeakCount"].isna()]:
+        source, target = result.loc[index, ["SourceID", "TargetID"]]
+        unknown = [node for node in (source, target) if node not in spectra]
+        if unknown:
+            raise ValueError("Edge node IDs do not match an MSP spectrum: " + ", ".join(unknown))
+        _, count = _exact_spectrum_cosine(spectra[source], spectra[target], mz_tolerance)
+        result.loc[index, "MatchPeakCount"] = count
+    return result
 
 
 def deduplicate_edges(edges: pd.DataFrame) -> pd.DataFrame:
