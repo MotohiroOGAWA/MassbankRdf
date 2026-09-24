@@ -114,8 +114,6 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
         msp_files: list[str] | None,
         file_classes: pd.DataFrame,
         edge_file: str | None,
-        completed_msp_kg_zip: str | None,
-        resume_enabled: bool,
         mz_tolerance: float,
         minimum_relative_intensity: float,
         common_peak_n: float,
@@ -124,10 +122,6 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
         min_matched_peaks: float,
         minimum_similarity: float,
         ion_mode: str,
-        use_kg_metadata_rank: bool,
-        use_precursor_mz: bool,
-        precursor_mz_column: str,
-        precursor_tolerance: float,
         ion_mode_column: str,
         score_thresholds: str,
         network_match_peaks: str,
@@ -173,7 +167,6 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
             total = 0
             skipped = 0
             names: list[str] = []
-            expected_spectrum_ids: set[str] = set()
             for position, file_path in enumerate(msp_files):
                 path = Path(file_path)
                 if path.name in names:
@@ -189,7 +182,7 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                     )
                     for record in records
                 )
-                if missing_ion_mode:
+                if missing_ion_mode and edge_frame is None:
                     raise ValueError(
                         f"{path.name}: {missing_ion_mode} readable spectra do "
                         f"not have a usable {ion_mode_column} ion mode value."
@@ -204,10 +197,8 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                         "source_text": text,
                     }
                 )
-                expected_spectrum_ids.update(
-                    f"{path.name}::{record_index}"
-                    for record_index in range(1, len(records) + 1)
-                )
+            if not readable and edge_frame is None:
+                raise ValueError("No readable MSP spectra were found for edge generation.")
             score_specs = _comma_values(score_thresholds, str)
             match_values = _comma_values(network_match_peaks, int)
             top_values = _comma_values(top_k_values, int, allow_all=True)
@@ -220,15 +211,10 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
         payload = {
             "msp_batch_job": {
                 "documents": documents,
-                "resume_enabled": bool(resume_enabled),
                 "top_n": settings["massbank_top_n"],
                 "mz_tolerance": float(mz_tolerance),
                 "min_matched_peaks": settings["min_matched_peaks"],
                 "minimum_similarity": float(minimum_similarity),
-                "use_kg_metadata_rank": bool(use_kg_metadata_rank),
-                "use_precursor_mz": bool(use_precursor_mz),
-                "precursor_mz_column": str(precursor_mz_column),
-                "precursor_tolerance": float(precursor_tolerance),
                 "use_ion_mode": True,
                 "ion_mode_column": str(ion_mode_column),
                 "max_massbank_inchikey": max_kg,
@@ -264,41 +250,11 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                 "mz_tolerance": float(mz_tolerance),
                 "min_matched_peaks": settings["min_matched_peaks"],
                 "minimum_similarity": float(minimum_similarity),
-                "use_kg_metadata_rank": bool(use_kg_metadata_rank),
-                "use_precursor_mz": bool(use_precursor_mz),
-                "precursor_mz_column": str(precursor_mz_column),
-                "precursor_tolerance": float(precursor_tolerance),
                 "use_ion_mode": True,
                 "ion_mode_column": str(ion_mode_column),
                 "max_massbank_inchikey": max_kg,
             },
         }
-        if completed_msp_kg_zip:
-            network_summary = dict(payload["summary"])
-            try:
-                reused = _reuse_msp_kg_result(
-                    completed_msp_kg_zip,
-                    session_id=session_id,
-                    expected_spectrum_ids=expected_spectrum_ids,
-                    sample_classes={
-                        document["file_name"]: document["sample_class"]
-                        for document in documents
-                    },
-                )
-            except (OSError, ValueError, zipfile.BadZipFile) as exc:
-                raise gr.Error(str(exc)) from exc
-            original_summary = reused.get("summary", {})
-            payload.update(reused)
-            payload["summary"] = {
-                **original_summary,
-                **network_summary,
-                "workflow": "molecular_network",
-                "reused_msp_kg_result": True,
-            }
-            payload["msp_batch_job"] = {
-                **payload["msp_batch_job"],
-                "resume_enabled": False,
-            }
         session_store.set(session_id, payload)
         return f"OK:{session_id}"
 
@@ -311,7 +267,8 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                 <section class="massbank-page-heading">
                 <h1>MSP Molecular Network + KG</h1>
                 <p>Compare molecular-network conditions, run weighted Leiden,
-                annotate through MassBank/KG, and export Cytoscape TSV files.</p>
+                aggregate existing MSP annotations by cluster, then use common peaks
+                and KG metadata for clusters without structure annotations.</p>
                 </section>
                 """
             )
@@ -333,49 +290,48 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
                 "Required columns: `SourceID`, `TargetID`, `Score`. "
                 "If `MatchPeakCount` is absent, a warning is shown and counts are "
                 "calculated from the MSP spectra using the m/z tolerance. "
-                "IDs may be a unique MSP `Name` or "
-                "`file.msp::record_number`. If omitted, edges are calculated "
+                "Node IDs are zero-based positions counting ALL MSP records, including "
+                "records without spectra, in upload order across files. Unique nonnumeric "
+                "MSP Names or `file.msp::zero_based_record_number` are also accepted. "
+                "Edges involving records without spectra require MatchPeakCount in the table. "
+                "If omitted, edges are calculated "
                 "from the uploaded MSP spectra using ion-mode-specific cosine "
                 "similarity."
             )
-            completed_msp_kg_zip = gr.File(
-                label="Completed MSP KG result ZIP (optional)",
-                type="filepath",
+            conditions = create_common_peak_conditions_panel(
+                default_max_massbank_inchikey=10,
             )
             gr.Markdown(
-                "When supplied, MassBank and KG searches are skipped and the "
-                "saved candidates/evidence are reused. The ZIP must contain "
-                "exactly the same spectrum IDs as the uploaded MSP files."
+                "These conditions apply only to Common peak searches for clusters "
+                "without MSP structure annotations. No per-spectrum MassBank search is run. "
+                "The m/z tolerance is also used to prepare network edges."
             )
-            resume_enabled = gr.Checkbox(label="Resume from checkpoint", value=False)
-            conditions = create_common_peak_conditions_panel()
             gr.Markdown(
-                "These conditions control cluster common-peak annotation. "
-                "MassBank top N, m/z tolerance, minimum matched peaks, similarity "
-                "and InChIKey limit also apply to individual spectra. "
-                "Individual spectra use the ion mode stored in the MSP."
+                "Primary annotations aggregate MSP `CompoundName` / `Name`, `InChIKey`, "
+                "`InChI`, and `SMILES`. Names alone remain labels and do not prevent "
+                "Common peak fallback. Multiple structures are retained as a list; "
+                "they are not treated as identification of all cluster members."
             )
-            gr.HTML("<h3>Additional molecular-network settings</h3>")
-            with gr.Row():
-                use_kg_metadata_rank = gr.Checkbox(
-                    label="Use KG metadata rank for individual spectra", value=True
-                )
-                use_precursor_mz = gr.Checkbox(label="Use precursor m/z for individual spectra", value=True)
-                precursor_mz_column = gr.Textbox(label="Precursor column", value="PRECURSORMZ")
-                precursor_tolerance = gr.Number(label="Precursor tolerance", value=0.01)
-                ion_mode_column = gr.Textbox(label="MSP ion mode column", value="IONMODE")
+            ion_mode_column = gr.Textbox(label="MSP ion mode column", value="IONMODE")
+            gr.Markdown(
+                "**Cluster generation:** filter edges by Score and MatchPeakCount; "
+                "retain the union of each node's top-k edges; split into connected "
+                "components; run Score-weighted Leiden within each component. "
+                "Isolated spectra remain single-node clusters. Set resolution to control "
+                "cluster granularity. Enter multiple values to compare conditions."
+            )
             gr.HTML("<h3>Network condition grid</h3>")
             with gr.Row():
                 score_thresholds = gr.Textbox(
-                    label="Score thresholds", value="p95,p97,p98,p99",
+                    label="Score thresholds", value="p95",
                     info="Comma-separated fixed values or percentiles.",
                 )
                 network_match_peaks = gr.Textbox(
                     label="MatchPeakCount thresholds", value="6"
                 )
-                top_k_values = gr.Textbox(label="Per-node top k", value="5,10,15,20")
+                top_k_values = gr.Textbox(label="Per-node top k", value="10")
                 resolutions = gr.Textbox(
-                    label="Leiden resolutions", value="0.5,1.0,1.5,2.0"
+                    label="Leiden resolutions", value="1.0"
                 )
             gr.HTML("<h3>Condition exported to node.tsv / edge.tsv</h3>")
             with gr.Row():
@@ -398,10 +354,8 @@ def create_app(session_store: TemporarySessionStore) -> gr.Blocks:
             run_button.click(
                 run,
                 [
-                    msp_files, file_classes, edge_file, completed_msp_kg_zip,
-                    resume_enabled, *conditions.inputs,
-                    use_kg_metadata_rank, use_precursor_mz, precursor_mz_column,
-                    precursor_tolerance, ion_mode_column,
+                    msp_files, file_classes, edge_file, *conditions.inputs,
+                    ion_mode_column,
                     score_thresholds, network_match_peaks,
                     top_k_values, resolutions, selected_score, selected_top_k,
                     selected_resolution, common_presence, random_seed,

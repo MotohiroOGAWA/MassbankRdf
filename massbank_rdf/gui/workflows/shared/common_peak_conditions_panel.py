@@ -22,7 +22,9 @@ class CommonPeakConditionsPanel:
         return [getattr(self, field.name) for field in fields(self)]
 
 
-def create_common_peak_conditions_panel() -> CommonPeakConditionsPanel:
+def create_common_peak_conditions_panel(
+    *, default_max_massbank_inchikey: int | None = None,
+) -> CommonPeakConditionsPanel:
     """Build the common annotation controls shared by all workflows."""
     gr.HTML("<h3>Common peak annotation conditions</h3>")
 
@@ -52,7 +54,7 @@ def create_common_peak_conditions_panel() -> CommonPeakConditionsPanel:
 
         max_massbank_inchikey = gr.Number(
             label="Max MassBank InChIKey",
-            value=None,
+            value=default_max_massbank_inchikey,
             precision=0,
             minimum=1,
             info="Blank means all unique InChIKeys from MassBank hits.",

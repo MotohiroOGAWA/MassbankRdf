@@ -705,9 +705,18 @@ def build_cytoscape_tables(
             compound_id = f"inchikey:{inchikey}"
             add_node(compound_id, "inchikey", inchikey)
             cluster_id = spectrum_cluster.get(spectrum_id, "")
+            annotation_node = f"spectrum:{spectrum_id}"
+            inferred_cluster = str(present(values.get("inferred_cluster_id"), ""))
+            if inferred_cluster:
+                cluster_id = inferred_cluster
+                annotation_node = f"cluster:{cluster_id}"
+                add_node(annotation_node, "cluster", cluster_id, cluster_id=cluster_id)
+                for member_id, member_cluster in spectrum_cluster.items():
+                    if member_cluster == cluster_id:
+                        add_edge(annotation_node, f"spectrum:{member_id}", "cluster_membership")
             inchikey_clusters.setdefault(inchikey, set()).add(cluster_id)
             add_edge(
-                f"spectrum:{spectrum_id}",
+                annotation_node,
                 compound_id,
                 str(present(values.get("annotation_source"), "massbank_annotation")),
                 float(present(values.get("score"), 0.0)),

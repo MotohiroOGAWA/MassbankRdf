@@ -36,6 +36,19 @@ def format_search_summary(payload: dict[str, Any]) -> str:
     if not isinstance(summary, dict):
         summary = {}
 
+    if summary.get("workflow") == "molecular_network":
+        return (
+            "MSP Molecular Network + KG\n"
+            f"Readable spectra: {summary.get('readable_spectrum_count', '-')}\n"
+            f"Clusters: {summary.get('cluster_count', '-')}\n"
+            f"Clusters with MSP structure information: {summary.get('structure_annotated_cluster_count', '-')}\n"
+            f"Common-peak MassBank candidates: {summary.get('common_peak_candidate_count', '-')}\n"
+            f"Unique InChIKeys for KG: {summary.get('unique_kg_inchikey_count', '-')}\n"
+            "Clustering: connected components, then Score-weighted Leiden.\n"
+            "Primary annotation: existing MSP names and structure IDs.\n"
+            "MassBank is searched only for cluster common peaks."
+        )
+
     msp_header = ""
     if summary.get("workflow") in {"msp_kg", "molecular_network"}:
         msp_header = (
@@ -324,8 +337,8 @@ def create_app(
                 <section class="massbank-page-heading">
                     <h1>Search Result</h1>
                     <p>
-                        MassBank results, generated SPARQL queries, and
-                        knowledge graph results are shown in separated tabs.
+                        Annotations, generated SPARQL queries, and
+                        knowledge graph results are shown in separate tabs.
                     </p>
                 </section>
                 """.format(input_path=input_path, workflow_title=workflow_title)
@@ -343,14 +356,20 @@ def create_app(
                 lines=3,
                 interactive=False,
             )
-            progress_bar = gr.HTML(
-                '<div style="display:flex;align-items:center;gap:12px;">'
-                '<progress style="width:100%;height:24px;" '
-                'value="0" max="100"></progress><strong>0.0%</strong></div>'
-            )
+            if is_network_workflow:
+                from massbank_rdf.gui.workflows.molecular_network.processor import StageProgress
+
+                _, initial_progress = StageProgress().update("input", 0, "Waiting")
+            else:
+                initial_progress = (
+                    '<div style="display:flex;align-items:center;gap:12px;">'
+                    '<progress style="width:100%;height:24px;" '
+                    'value="0" max="100"></progress><strong>0.0%</strong></div>'
+                )
+            progress_bar = gr.HTML(initial_progress)
 
             with gr.Tabs(selected="massbank") as result_tabs:
-                with gr.Tab("MassBank", id="massbank"):
+                with gr.Tab("Cluster annotations" if is_network_workflow else "MassBank", id="massbank"):
                     massbank_result_table = create_massbank_tab()
 
                 with gr.Tab("SPARQL", id="sparql"):

@@ -1,262 +1,151 @@
-# MSP Molecular Network + KG workflow
+# MSP Molecular Network + KG
 
-## Purpose
+`/molecular-network/input/` で MSP と edge テーブルを読み込み、先に
+クラスターを特定する。各スペクトルの MassBank 検索は行わない。
 
-This workflow combines a spectrum molecular network with MassBank annotations
-and KG metadata. It produces Cytoscape-compatible node and edge tables while
-retaining the complete MassBank/KG output from the MSP annotation workflow.
+処理順は次のとおり。
 
-The workflow URL is `/molecular-network/input/`.
+1. MSP / edge テーブルを読み込む。
+2. edge を準備する。
+3. edge からクラスターを生成する。
+4. MSP 内の既存の化合物名・構造 ID をクラスター単位に集約する。
+5. 構造情報がないクラスターについて Common peak を抽出し、MassBank を検索する。
+6. 既存情報および Common peak 候補の InChIKey で KG メタデータを取得する。
+7. クラスター情報・根拠・Cytoscape テーブルを保存する。
 
-## Inputs
+## 入力とクラスター生成方法
 
-Uploads are validated by their contents, regardless of filename extension.
-This applies to MSP spectra, result ZIP archives, and edge tables.
-Tab/comma delimiters in edge tables are detected from the header.
+edge テーブルは TSV/CSV で `SourceID`, `TargetID`, `Score` を必須とする。
+`MatchPeakCount` がなければ、両端の MSP スペクトルを m/z 許容幅で
+一対一対応させて計算する。入力済みの Score は再計算しない。
 
-### MSP files
+ノード ID は **0 始まりの全レコード通し番号**。スペクトルを持たないレコードも
+一つとして数え、ノード・メタデータを保持する。例えば「スペクトルあり・なし・あり」
+の順なら ID は `0, 1, 2` で、最後のスペクトルは `2` になる。
+複数ファイルではアップロード順に通し番号を付ける。
+`file_name.msp::zero_based_record_number` はファイル内の0始まり位置の別名。
+全入力で一意の非数値 MSP `Name` も別名として使用できる。
+数値の Name よりレコード位置の ID を優先する。
+edge に現れないレコードも単独ノードとして保持する。
+`has_spectrum` でピークの有無を区別する。Common peak の計算にはスペクトルを
+持つメンバーのみを使用する。
+スペクトルのないレコードにつながる edge の一致ピーク数は計算できないため、
+その edge には `MatchPeakCount` の入力が必要。既存値は保持する。
 
-One or more MSP files can be uploaded. The editable `sample_class` column is
-handled in the same way as the MSP KG workflow. Blank classes become `Class1`,
-`Class2`, and so on in upload order.
+現行の重み付き Leiden を継続して使う。
 
-The canonical spectrum node ID is:
+1. 自己ループを除く。逆向きを含む重複 edge は Score が最大の行を残す。
+   同点なら MatchPeakCount が最大の行を残す。
+2. Score と MatchPeakCount の下限で edge を絞る。
+3. 各ノードの上位 k 本を選択し、どちらか一方が選択した edge を残す
+   （union top-k）。したがって最終次数は k を超えることがある。
+4. 無向グラフの連結成分を抽出し、`connected_component_id` を付ける。
+5. 各連結成分で Score を重みとする Leiden
+   (`RBConfigurationVertexPartition`) を実行して `cluster_id` を付ける。
+6. 孤立ノードは単独クラスターにする。
 
-```text
-file_name.msp::readable_record_number
-```
+resolution は分割の粒度を調整するパラメータ。seed の既定値は 42。
+連結成分と Leiden クラスターは別々に出力する。
+クラスターはスペクトル類似性のグループであり、同一化合物を意味しない。
 
-The edge table may instead use an MSP `Name` value when that value is unique
-across all uploaded spectra. Empty or duplicated `Name` values cannot be used
-as aliases; use the canonical ID in that case.
+Score の `p95` は edge 全体の Score の 95 パーセンタイルを下限にする。
+MatchPeakCount/top-k フィルタより前に計算する。既定値は p95、top-k=10、
+MatchPeakCount=6、resolution=1.0 の **1 条件**。
+複数条件を比較したい場合はカンマ区切りで指定する。
+出力条件は比較対象に含める。MatchPeakCount は入力した最初の値を使う。
+大量の条件を毎回実行する必要はない。
 
-### Reusing a completed MSP KG result
+edge が未指定の場合のみ、同じ ion mode の MSP 同士から cosine edge を生成する。
+この場合は MSP の ion mode が必須。edge を入力する場合は必須ではない。
+MSP は処理中に一度読み込み、その後の工程で再利用する。
 
-`Completed MSP KG result ZIP` accepts a ZIP produced by
-`/msp-kg/input/`. When supplied:
+## 一次アノテーション：MSP 既存情報
 
-1. Validate the completed-result schema and ZIP size.
-2. Compare the complete saved `spectrum_uid` set with the currently uploaded
-   MSP spectra.
-3. Reject the ZIP if any spectrum is missing or unexpected.
-4. Restore MassBank candidates, selected InChIKeys, KG evidence, SPARQL,
-   record summary, and annotations.
-5. Update candidate/annotation sample classes from the current file/class
-   table.
-6. Skip the per-spectrum MassBank search and batched KG search.
-7. Continue with edge generation/import, network comparison, Leiden, and the
-   unannotated-cluster fallback.
+ユーザーが選択した方式は、MSP に含まれる既存情報の集約。
 
-This is substantially faster when the same MSP spectra have already completed
-the MSP KG workflow. A ZIP from different MSP files cannot be reused merely
-because its record count happens to be the same.
+- 名前：`CompoundName`、なければ `Name`。
+- 構造情報：`InChIKey`、`InChI`、`SMILES`。
+- クラスターの全候補、構造情報を持つメンバー数、全メンバーに対する割合、
+  根拠となるノード ID を保持する。
+- 複数の構造情報がある場合はリストのまま残す。一つの化合物に強制統合しない。
+- `Name` は測定 ID の場合もあるため、名前だけなら `name_only` とする。
+  名前だけのクラスターは Common peak の対象に含める。
+- InChIKey の形式に一致する値、`InChI=` で始まる値、または入力 SMILES が
+  あるメンバーを持つクラスターは `structure_present` とする。
+  MSP 提供者の構造情報を受け継ぐものであり、構造の実験的な検証ではない。
+- InChI/SMILES のみでは現在の KG API に問い合わせられない。
+  自動的に InChIKey へ変換する機能は含まない。
 
-### Spectrum similarity edge table
+その他の方法として、外部アノテーション表の集約、CANOPUS による化合物クラス予測、
+MS2LDA/Mass2Motif による部分構造アノテーションがある。これらは今回の実装には
+含めない。将来追加する際も入力由来の情報と予測結果を区別する。
 
-The edge table is optional. If supplied, upload TSV, CSV, or TXT with these
-case-sensitive columns:
+参考：
+- [CANOPUS](https://bio.informatik.uni-jena.de/software/canopus/)
+- [MS2LDA user guide](https://www.ms2lda.org/user_guide/)
 
-| Column | Meaning |
+## Common peak → MassBank → KG
+
+構造情報のあるメンバーが一つもないクラスターだけを対象にする。
+
+1. 各スペクトルの相対強度閾値以下のピークを除く。
+2. 共通ピーク検出サービスで m/z 許容幅に基づきピークをまとめる。
+3. 出現スペクトル数、ピーク数、合計強度、m/z の順で順位を付ける。
+4. クラスター内出現率 (`presence_fraction`) で絞り、上位 N ピークを選ぶ。
+5. 出現スペクトル数を擬似強度として MassBank を検索する。
+   precursor m/z フィルタは使わない。ion mode、最小一致ピーク数、
+   最小類似度、候補数の設定を適用する。
+6. 共通サービスの KG metadata rank とユニーク InChIKey 上限を適用する。
+   `Max MassBank InChIKey` の既定値は 10。空欄の場合は上限なし。
+7. 候補 InChIKey と MSP の既存 InChIKey を重複排除し、50 件ずつ KG に照会する。
+
+KG の検索入口は InChIKey。m/z 自体を KG に直接照会するものではない。
+Common peak の候補はクラスターへの推定根拠として保存し、メンバー全員の同定には
+変換しない。候補がなければ未アノテーションのまま保持する。
+候補が存在しても KG のメタデータが見つからない場合を区別して記録する。
+単独クラスターのピークはその一つのスペクトルに由来し、複数メンバーでの共有を
+裏付けるものではない。KG の関連は試料での疾患・経路の存在を確定しない。
+
+## 工程別進捗
+
+全体を一本のパーセントに換算せず、以下の七本を常時表示する。
+
+| 工程 | 進捗の単位 |
 |---|---|
-| `SourceID` | First spectrum node |
-| `TargetID` | Second spectrum node |
-| `Score` | Spectrum similarity and edge weight |
-| `MatchPeakCount` | Optional number of matched peaks |
+| MSP / edge input | 読込開始・終了 |
+| Edge preparation | edge 生成時の処理済スペクトル数、または一致ピーク数の計算件数 |
+| Cluster generation | 完了した条件数 / 条件総数 |
+| MSP annotation | 集約済クラスター数 / 全クラスター数 |
+| Common peaks | 処理済対象クラスター数 / 対象クラスター数 |
+| KG metadata | 照会済ユニーク InChIKey 数 / 全キー数 |
+| Export | 出力開始・終了 |
 
-If `MatchPeakCount` is absent, the UI shows a warning. Before MassBank/KG
-search, the workflow matches each edge endpoint to its MSP spectrum and computes
-one-to-one matched-peak counts using the configured m/z tolerance. The supplied
-`Score` is preserved. Computed counts are used in network filtering and exported
-in the edge tables. Unknown spectrum IDs produce an error.
+未開始の工程は Waiting、完了した工程は 100% を保持する。
+KG 対象がなければスキップを明示する。ページ再読込で完了結果を表示する場合も
+七本のバーを維持する。
 
-Self-loops are removed. Reverse/duplicate edges are collapsed and the row with
-the highest `Score`, then highest `MatchPeakCount`, is retained.
+## 出力
 
-### Automatic edge calculation
-
-When the edge table is omitted, the workflow calculates it from the uploaded
-MSP spectra before MassBank search:
-
-1. Read and normalize the configured ion mode for every spectrum. A readable
-   spectrum without ion mode is rejected at input validation.
-2. Compare spectra only within the same ion mode.
-3. Build a sparse expanded m/z-bin incidence matrix to find candidate pairs.
-4. Re-evaluate candidate pairs with exact one-to-one peak matching within the
-   configured MassBank m/z tolerance.
-5. Calculate cosine similarity from the full spectrum norms and matched-peak
-   dot product.
-6. Retain pairs whose exact matched-peak count is at least the smallest
-   MatchPeakCount value in the network condition grid.
-
-Progress reports processed spectra and the number of qualifying edges. Sparse
-candidate discovery avoids exact comparison of every possible spectrum pair,
-while exact scoring prevents coarse-bin false positives from entering the
-network.
-
-## MassBank and KG annotation
-
-Every readable spectrum is searched against MassBank first, using the same
-parameters and candidate-ranking code as the MSP KG workflow. Candidate
-InChIKeys are then queried against the KG in batches. `Use KG metadata rank`
-can be turned off to rank unique InChIKeys using MassBank similarity only.
-
-The precursor m/z filter applies only to this ordinary per-spectrum search.
-The MSP ion mode is required for ordinary per-spectrum searches and automatic
-edge generation. Common-peak searches use the shared Ion mode dropdown instead;
-a blank selection disables that search filter.
-
-## Molecular-network condition grid
-
-For each condition:
-
-1. Keep edges with `MatchPeakCount` at least the configured threshold.
-2. Keep edges with `Score` at least the configured fixed or percentile
-   threshold.
-3. Optionally retain each node's top-k edges. The final graph uses the union of
-   the per-node selections: an edge remains when it is selected by either end.
-4. Remove duplicate undirected edges and self-loops.
-5. Include every MSP spectrum as a node, including isolated spectra.
-6. Split the graph into connected components.
-7. Run weighted Leiden independently within every non-singleton component,
-   using `Score` as weight. Singletons become one-node clusters.
-
-Score thresholds accept comma-separated fixed values such as `0.7,0.8` or
-percentiles such as `p95,p97,p98,p99`. Percentiles are calculated from the
-uploaded edge table before the MatchPeakCount and top-k filters.
-
-Default comparison values are:
-
-- `MatchPeakCount >= 6`
-- Score thresholds `p95,p97,p98,p99`
-- top k `5,10,15,20`
-- Leiden resolution `0.5,1.0,1.5,2.0`
-- random seed `42`
-
-Score filtering is intended to select credible edges. Use Leiden resolution to
-control cluster granularity.
-
-The selected export condition must also be present in the comparison grid.
-Its first MatchPeakCount threshold, selected Score threshold, selected top-k,
-and selected resolution determine `node.tsv` and `edge.tsv`.
-
-## Unannotated-cluster fallback
-
-After the selected network has been clustered, a cluster is considered
-annotated when at least one member spectrum has a selected MassBank InChIKey.
-Only clusters with no such annotation enter the fallback.
-
-The **Common peak annotation conditions** panel is the same component used by
-Common Peak Annotation. Both workflows share validation, `find_common_peaks`,
-and `annotate_common_peaks_with_massbank`, including KG metadata ranking and
-unique InChIKey limits. Change the shared component/service to update both.
-
-Shared defaults are m/z tolerance 0.01, minimum relative intensity 0.05,
-Common peak N 10, unlimited unique InChIKeys, MassBank top N 50,
-minimum matched peaks 3, minimum cosine similarity 0.5, and Positive ion mode.
-The MassBank search limits also apply to ordinary per-spectrum searches.
-
-For each unannotated cluster:
-
-1. Remove peaks below the per-record relative intensity threshold.
-2. Group peaks within tolerance of the running group mean m/z.
-3. Rank by record count, peak count, total intensity, then m/z.
-4. Apply the network-specific minimum cluster presence fraction (default 0,
-   disabled), preserving the shared ranking.
-5. Select Common peak N peaks and search using record counts as pseudo intensities.
-6. Apply similarity filtering, shared KG metadata ranking and the InChIKey limit.
-
-Common-peak search does not apply precursor m/z. Its Ion mode dropdown has
-exactly the same behavior as Common Peak Annotation, including the blank option.
-MSP ion-mode column, ordinary-spectrum precursor filtering/ranking, cluster
-presence threshold, and network/Leiden settings remain additional controls.
-
-Candidate edges are marked `cluster_common_peak_massbank`; these are cluster-level
-inferences propagated to member spectra, not direct spectrum identifications.
-`molecular_network_config.json` records the shared `common_peak_settings` as well
-as the network-specific settings. Common peak exports retain shared statistics
-and the network aliases `mz`, `intensity` (record count), and `presence_count`.
-
-Fallback InChIKeys that were not already queried are sent to the KG in batches.
-
-## Output files
-
-The result page includes the normal MassBank, SPARQL, KG, class-analysis, and
-download tabs, plus network-condition and Cytoscape previews. The ZIP contains:
-
-| File | Meaning |
+| ファイル | 内容 |
 |---|---|
-| `node.tsv` | Cytoscape nodes for the selected condition |
-| `edge.tsv` | Cytoscape edges for the selected condition |
-| `network_condition_statistics.csv` | One row per parameter combination |
-| `network_cluster_assignments_all_conditions.csv` | Cluster/component assignment for every node and condition |
-| `selected_condition_spectrum_nodes.tsv` | Spectrum nodes and selected cluster attributes |
-| `selected_condition_similarity_edges.tsv` | Filtered spectrum-similarity edges |
-| `generated_similarity_edges.tsv` | Automatically calculated unfiltered edge input |
-| `uploaded_similarity_edges.tsv` | Validated/remapped uploaded edge input |
-| `unannotated_cluster_common_peaks.tsv` | Common peaks synthesized for fallback clusters |
-| `unannotated_cluster_massbank_candidates.tsv` | Fallback MassBank matches |
-| `molecular_network_config.json` | Network grid and selected-condition settings |
-| `massbank_candidates_by_spectrum.csv` | Ordinary per-spectrum MassBank candidates |
-| `spectrum_inchikey_annotations.csv` | Ordinary selected InChIKeys per spectrum |
-| `massbank_record_summary.csv` | MassBank record aggregation |
-| `class_inchikey_kg_analysis.csv` | Sample-class/InChIKey summary |
-| `kg_evidence.json` | Ordinary and fallback KG evidence |
-| `sparql/` | Generated KG queries |
+| `cluster_annotations.tsv` | 名前・構造情報の集約、根拠数・割合、Common peak 候補、KG 状態 |
+| `msp_annotations.tsv` | MSP 由来の各スペクトルの情報 |
+| `network_condition_statistics.csv` | 各条件のクラスター数・孤立ノード数・サイズ・modularity 等 |
+| `network_cluster_assignments_all_conditions.csv` | 全条件での所属クラスター |
+| `selected_condition_spectrum_nodes.tsv` | 選択条件のノードと既存 MSP 情報 |
+| `selected_condition_similarity_edges.tsv` | 選択条件で残った edge |
+| `uploaded_similarity_edges.tsv` / `generated_similarity_edges.tsv` | 入力/生成 edge |
+| `unannotated_cluster_common_peaks.tsv` | 未アノテーションクラスターの共通ピーク |
+| `unannotated_cluster_massbank_candidates.tsv` | クラスター単位の MassBank 候補 |
+| `kg_evidence.json`, `sparql/` | KG 根拠とクエリ |
+| `molecular_network_config.json`, `summary.json` | 設定と集計 |
+| `node.tsv`, `edge.tsv` | Cytoscape 用のノード・edge |
 
-### `node.tsv`
+Cytoscape の主な edge 種別は `spectrum_similarity`, `msp_metadata`,
+`cluster_membership`, `cluster_common_peak_massbank`, `kg_metadata`。
+Common peak 候補は `cluster:<id>` ノードに接続する。
+KG メタデータノードにはクラスター ID を付ける。
+結果ページの先頭タブは Cluster annotations。
 
-`node_id` is namespaced for Cytoscape:
-
-- `spectrum:...` for an MSP spectrum
-- `inchikey:...` for a compound key
-- `metadata:<cluster>:<type>:<provider>:...` for a KG entity
-
-Spectrum rows contain `node_type=spectrum`, `cluster_id`, `connected_component_id`,
-`component_node_count`, source file, class, MSP name, and peak count. KG rows
-include their metadata type in `node_type`, as well as provider and cluster ID.
-The same KG entity is emitted as a separate metadata node in every cluster in
-which it occurs, so metadata nodes never merge otherwise separate clusters.
-
-### `edge.tsv`
-
-Edge types are:
-
-- `spectrum_similarity`
-- `massbank_annotation`
-- `cluster_common_peak_massbank`
-- `kg_metadata`
-
-Spectrum-similarity `weight` is `Score`; its matched peak count is retained.
-Annotation edges carry the MassBank score and accession where available.
-
-### Condition statistics
-
-Each row reports:
-
-- node count
-- edge count
-- isolated node count
-- connected component count
-- cluster count
-- largest component node count and fraction
-- minimum, median, mean, and maximum cluster size
-- weighted modularity
-- resolved Score threshold
-- Score threshold specification
-- top k
-- MatchPeakCount threshold
-- Leiden resolution
-- random seed
-
-## Cytoscape import
-
-Import `node.tsv` as a node table with `node_id` as the key. Import `edge.tsv`
-as a network table using `source` and `target`. Map `node_type`, `cluster_id`,
-and `sample_class` to visual properties. `edge_type` can be used to distinguish
-spectrum similarity, MassBank annotation, and KG metadata relationships.
-
-## Dependencies
-
-Weighted Leiden uses `python-igraph` and `leidenalg`; these are declared in
-`env/requirements.txt`. The workflow raises an explicit error if they are not
-installed rather than silently substituting a different clustering algorithm.
+旧 MSP KG 完了 ZIP の再利用 UI と、スペクトル単位の MassBank/precursor 設定は
+このワークフローから外した。別の MSP + KG ワークフローは変更しない。

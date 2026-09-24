@@ -204,6 +204,9 @@ def build_massbank_loader(
         elif not isinstance(result_df, pd.DataFrame):
             result_df = pd.DataFrame(result_df)
 
+        if payload.get("summary", {}).get("workflow") == "molecular_network":
+            return result_df, gr.update(selected="massbank")
+
         formatted_df = format_massbank_result_dataframe(result_df)
         formatted_df = rank_candidates_with_kg_metadata(
             formatted_df,
